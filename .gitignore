@@ -1,0 +1,10 @@
+# compiled examples and run output
+cuda_examples/vector_add
+cuda_examples/matmul
+cuda_examples/image_blur
+cuda_examples/reduction
+cuda_examples/results.csv
+*.pgm
+results/
+cuda_results.zip
+.ipynb_checkpoints/

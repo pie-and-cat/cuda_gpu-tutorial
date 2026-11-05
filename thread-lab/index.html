@@ -1,0 +1,1823 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Thread Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  /* Layout: a three-column lab bench. Palette of blocks, the kernel stack you build, the GPU stage that runs it. */
+  --bench: #e6eaee;
+  --panel: #f8fafb;
+  --ink: #16202a;
+  --muted: #586574;
+  --line: #c6cfd8;
+  --accent: #2f62d6;
+  --c-index: #2f62d6;
+  --c-control: #f2a93b;
+  --c-memory: #0e7c6a;
+  --c-sync: #b3307d;
+  --c-hat: #25303b;
+  --good: #1c8048;
+  --bad: #c73434;
+  --font-display: "Big Shoulders Display", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-code: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bench);
+  color: var(--ink);
+  font: 15px/1.5 var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+button, select { font: inherit; color: inherit; }
+code, .mono { font-family: var(--font-code); }
+:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 60%, white); outline-offset: 2px; }
+
+/* ---------------------------------------------------------------- header */
+.topbar {
+  display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between;
+  gap: 12px 28px; padding: 18px 24px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.brand { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+.wordmark {
+  font-family: var(--font-display); font-weight: 800; font-size: 44px; line-height: .9;
+  letter-spacing: .02em; text-transform: uppercase; margin: 0;
+}
+.wordmark span { color: var(--accent); }
+.tagline { color: var(--muted); margin: 0; max-width: 46ch; }
+.levels { display: flex; gap: 8px; flex-wrap: wrap; }
+.level-tab {
+  display: grid; grid-template-columns: auto auto; align-items: center; column-gap: 8px;
+  padding: 6px 12px 6px 8px; border: 1px solid var(--line); border-radius: 10px;
+  background: white; cursor: pointer; text-align: left;
+}
+.level-tab .num {
+  grid-row: span 2; font-family: var(--font-display); font-weight: 800; font-size: 28px; line-height: 1;
+  color: var(--muted); min-width: 1.4ch; text-align: center;
+}
+.level-tab .name { font-weight: 600; font-size: 13px; line-height: 1.2; }
+.level-tab .state { font-size: 12px; color: var(--muted); line-height: 1.2; }
+.level-tab[aria-selected="true"] { border-color: var(--ink); box-shadow: inset 0 -3px 0 var(--accent); }
+.level-tab[aria-selected="true"] .num { color: var(--accent); }
+.level-tab.done .state { color: var(--good); font-weight: 600; }
+
+/* ---------------------------------------------------------------- layout */
+.lab {
+  display: grid; gap: 16px; padding: 16px 24px 32px;
+  grid-template-columns: minmax(230px, 270px) minmax(300px, 380px) minmax(0, 1fr);
+  grid-template-areas: "mission mission stage" "palette kernel stage";
+  align-items: start;
+}
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; min-width: 0; }
+.panel h2 {
+  font-family: var(--font-display); font-weight: 700; font-size: 22px; letter-spacing: .03em;
+  text-transform: uppercase; margin: 0 0 10px; line-height: 1;
+}
+.mission { grid-area: mission; }
+.palette { grid-area: palette; }
+.kernel { grid-area: kernel; }
+.stage { grid-area: stage; position: sticky; top: 12px; }
+@media (max-width: 1180px) {
+  .lab { grid-template-columns: minmax(220px, 280px) minmax(0, 1fr); grid-template-areas: "mission mission" "palette kernel" "stage stage"; }
+  .stage { position: static; }
+}
+@media (max-width: 700px) {
+  .lab { grid-template-columns: minmax(0, 1fr); grid-template-areas: "mission" "palette" "kernel" "stage"; padding: 12px 16px 24px; }
+  .topbar { padding: 14px 16px; }
+  .wordmark { font-size: 36px; }
+}
+
+/* ---------------------------------------------------------------- mission */
+.eyebrow { font-size: 12px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0 0 4px; }
+.mission h1 {
+  font-family: var(--font-display); font-weight: 800; font-size: 34px; line-height: 1; margin: 0 0 8px;
+  text-wrap: balance;
+}
+.mission p { margin: 0 0 8px; max-width: 72ch; }
+.mission .note { color: var(--muted); font-size: 14px; }
+.mission details { margin-top: 6px; font-size: 14px; }
+.mission summary { cursor: pointer; font-weight: 600; color: var(--accent); }
+.mission details p, .mission details ul { margin: 6px 0 0; max-width: 72ch; }
+.mission details ul { padding-left: 20px; }
+
+/* ---------------------------------------------------------------- blocks */
+.block {
+  --c: var(--c-index); --fg: white;
+  position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 2px;
+  min-height: 44px; padding: 11px 12px 15px; background: var(--c); color: var(--fg);
+  font: 500 13px/1.35 var(--font-code);
+  clip-path: polygon(0 6px, 14px 6px, 18px 0, 34px 0, 38px 6px, 100% 6px, 100% calc(100% - 6px), 38px calc(100% - 6px), 34px 100%, 18px 100%, 14px calc(100% - 6px), 0 calc(100% - 6px));
+  user-select: none; -webkit-user-select: none; touch-action: none; cursor: grab;
+}
+.block.cat-control { --c: var(--c-control); --fg: var(--ink); }
+.block.cat-memory { --c: var(--c-memory); }
+.block.cat-sync { --c: var(--c-sync); }
+.block .txt { white-space: pre-wrap; }
+.slot {
+  appearance: none; -webkit-appearance: none; border: 0; border-radius: 999px;
+  background: rgba(255, 255, 255, .93) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%2316202a'/%3E%3C/svg%3E") no-repeat right 7px center;
+  color: var(--ink); padding: 1px 22px 1px 9px; font: 500 12.5px/1.6 var(--font-code); cursor: pointer;
+}
+span.slot { display: inline-block; cursor: grab; }
+.slot.mirror { background: rgba(255, 255, 255, .93); padding: 1px 9px; border-radius: 999px; color: var(--ink); }
+.palette-group { margin: 12px 0 4px; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.palette-group::before { content: ""; width: 10px; height: 10px; border-radius: 3px; background: var(--dot); }
+.palette-list { display: grid; gap: 8px; }
+.palette-list .block:hover { filter: brightness(1.06); }
+.palette .help { font-size: 13px; color: var(--muted); margin: 0; }
+.palette.trash-target { outline: 3px dashed var(--bad); outline-offset: -6px; }
+.palette.trash-target::after { content: "Drop here to remove"; display: block; text-align: center; color: var(--bad); font-weight: 600; margin-top: 10px; }
+
+.kernel-stack { position: relative; }
+.hat {
+  position: relative; background: var(--c-hat); color: white; border-radius: 14px 14px 0 0;
+  padding: 12px 12px 14px; font: 500 12.5px/1.45 var(--font-code); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.hat::after { content: ""; position: absolute; left: 18px; bottom: -6px; width: 16px; height: 6px; background: var(--c-hat); }
+.hat .kw { color: #9fc0ff; }
+#kernel-list { list-style: none; margin: 0; padding: 0; min-height: 52px; }
+#kernel-list > li { margin-top: -6px; position: relative; }
+#kernel-list > li:first-child { margin-top: 0; }
+#kernel-list .block { padding-right: 84px; }
+.block-tools { position: absolute; right: 6px; top: 50%; transform: translateY(-58%); display: flex; gap: 2px; }
+.block-tools button {
+  width: 24px; height: 24px; border: 0; border-radius: 6px; cursor: pointer; padding: 0;
+  background: rgba(255, 255, 255, .2); color: inherit; font-size: 13px; line-height: 24px;
+}
+.cat-control .block-tools button { background: rgba(0, 0, 0, .1); }
+.block-tools button:hover { background: rgba(255, 255, 255, .38); }
+.step-no { position: absolute; left: -26px; top: 50%; transform: translateY(-60%); font: 600 11px var(--font-code); color: var(--muted); width: 20px; text-align: right; }
+#kernel-list > li.current .block { box-shadow: inset 0 0 0 3px rgba(255, 255, 255, .85); }
+#kernel-list > li.current .step-no { color: var(--accent); }
+.empty-drop {
+  margin-top: 4px; border: 2px dashed var(--line); border-radius: 10px; padding: 14px; text-align: center;
+  color: var(--muted); font-size: 14px;
+}
+.cap {
+  margin-top: -6px; background: var(--c-hat); color: white; padding: 12px 12px 8px; border-radius: 0 0 14px 14px;
+  font: 500 13px var(--font-code);
+  clip-path: polygon(0 6px, 14px 6px, 18px 0, 34px 0, 38px 6px, 100% 6px, 100% 100%, 0 100%);
+}
+.kernel .stack-wrap { padding-left: 26px; }
+.kernel-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.drop-marker { height: 4px; border-radius: 2px; background: var(--accent); margin: 4px 0; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+.drag-ghost { position: fixed; z-index: 50; pointer-events: none; opacity: .92; transform: rotate(-1.2deg); box-shadow: 0 10px 24px rgba(0, 0, 0, .18); }
+li.drag-source .block { opacity: .35; }
+body.dragging, body.dragging * { cursor: grabbing !important; }
+.locked .block { cursor: default; }
+.locked .block-tools, .locked .kernel-actions button { pointer-events: none; opacity: .4; }
+
+/* ---------------------------------------------------------------- buttons */
+.btn {
+  border: 1px solid var(--line); background: white; border-radius: 9px; padding: 7px 14px; cursor: pointer; font-weight: 600; font-size: 14px;
+}
+.btn:hover { border-color: var(--ink); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: white; }
+.btn.primary:hover { background: color-mix(in srgb, var(--accent) 85%, black); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+
+/* ---------------------------------------------------------------- stage */
+.stage-head { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.stage-head h2 { margin: 0; }
+.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.controls label { font-size: 13px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
+.controls select { border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; background: white; }
+.launch {
+  background: var(--c-hat); color: #dfe8f3; border-radius: 10px; padding: 9px 12px; font: 500 12.5px/1.45 var(--font-code);
+  overflow-x: auto; white-space: pre; margin-bottom: 10px;
+}
+.launch .cm { color: #8fa3b8; }
+.ticker {
+  display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; justify-content: space-between;
+  border: 1px solid var(--line); border-radius: 10px; background: white; padding: 8px 12px; margin-bottom: 12px; min-height: 42px;
+}
+.ticker .now { font: 500 13px/1.4 var(--font-code); }
+.ticker .now b { font-family: var(--font-body); }
+.counters { display: flex; gap: 6px; flex-wrap: wrap; }
+.counter { font-size: 12.5px; padding: 2px 9px; border-radius: 999px; background: var(--bench); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.counter b { font-weight: 600; }
+.counter.gpu { background: color-mix(in srgb, var(--accent) 14%, white); }
+.counter.cpu { background: #ece7dc; }
+
+.viz {
+  border: 1px solid var(--line); border-radius: 12px; padding: 14px; overflow-x: auto;
+  background-color: #fbfcfd;
+  background-image: radial-gradient(circle, #d7dde4 1px, transparent 1.2px);
+  background-size: 14px 14px;
+}
+.viz-title { font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0 0 6px; }
+.lane { display: grid; gap: 2px; grid-template-columns: 52px repeat(var(--cols), minmax(15px, 1fr)); align-items: center; min-width: calc(52px + var(--cols) * 17px); }
+.lane + .lane { margin-top: 3px; }
+.lane .rowlbl { font: 500 11.5px var(--font-code); color: var(--muted); text-align: right; padding-right: 6px; white-space: nowrap; }
+.lane .gap-row { height: 10px; }
+.blockbox {
+  border: 1.5px solid var(--line); border-radius: 7px; padding: 2px 6px; font: 500 11px var(--font-code); color: var(--muted);
+  background: white; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.chip {
+  aspect-ratio: 1; min-height: 18px; min-width: 0; border: 0; border-radius: 5px; padding: 0; cursor: pointer;
+  background: #dbe2ea; color: var(--muted); font: 600 11px var(--font-code); display: grid; place-items: center;
+  transition: background-color .25s, box-shadow .25s, color .25s;
+}
+.chip.active { background: var(--accent); color: white; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent); }
+.chip.waiting { background: color-mix(in srgb, var(--c-sync) 22%, white); color: var(--c-sync); }
+.chip.returned { background: repeating-linear-gradient(135deg, #e3e7ec 0 4px, #cfd6de 4px 8px); color: #8994a1; }
+.chip.fault { background: var(--bad); color: white; }
+.chip.lost { box-shadow: inset 0 0 0 2px var(--bad); }
+.chip.kept { box-shadow: inset 0 0 0 2px var(--good); }
+.chip.selected { outline: 2px solid var(--ink); outline-offset: 1px; }
+.ival { font: 500 11.5px var(--font-code); text-align: center; color: var(--ink); font-variant-numeric: tabular-nums; min-height: 18px; }
+.ival.bad { color: var(--bad); font-weight: 600; }
+.idx { font: 500 10.5px var(--font-code); text-align: center; color: var(--muted); }
+.idx.ghost { color: var(--bad); opacity: .7; }
+.cell {
+  min-height: 24px; border: 1px solid var(--line); border-radius: 4px; background: white; display: grid; place-items: center;
+  font: 500 12px var(--font-code); font-variant-numeric: tabular-nums; transition: background-color .3s, box-shadow .3s;
+}
+.cell.ghost { background: transparent; border-style: dashed; color: transparent; }
+.cell.read { box-shadow: inset 0 0 0 2px var(--accent); }
+.cell.write { background: color-mix(in srgb, var(--c-memory) 22%, white); border-color: var(--c-memory); }
+.cell.stale { box-shadow: inset 0 0 0 2px var(--bad); background: color-mix(in srgb, var(--bad) 10%, white); }
+.cell.pending { border: 1.5px dashed var(--c-sync); }
+.cell.fault { background: color-mix(in srgb, var(--bad) 18%, white); border: 1.5px dashed var(--bad); color: var(--bad); }
+.cell.cpu { box-shadow: inset 0 0 0 2px #9a6b1d; }
+.cell.empty { color: #a7b1bc; }
+.cell.mine { box-shadow: inset 0 0 0 2px var(--ink); }
+.registers { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 14px; align-items: stretch; }
+.register { border: 1px solid var(--line); background: white; border-radius: 10px; padding: 8px 14px; min-width: 150px; }
+.register .lbl { font: 500 12px var(--font-code); color: var(--muted); }
+.register .big { font-family: var(--font-display); font-weight: 800; font-size: 40px; line-height: 1; font-variant-numeric: tabular-nums; }
+.register.good .big { color: var(--good); }
+.register.bad .big { color: var(--bad); }
+.register .sub { font-size: 12.5px; color: var(--muted); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 12px; font-size: 12.5px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 14px; height: 14px; border-radius: 3px; display: inline-block; }
+.cpu-core {
+  display: inline-flex; gap: 8px; align-items: center; border: 1px solid #c8b48a; background: #f6efe0; color: #6d4c12;
+  border-radius: 999px; padding: 3px 12px; font-size: 13px; font-weight: 600; margin-bottom: 10px;
+}
+.cpu-core code { font-weight: 500; }
+
+/* image level */
+.images { display: flex; flex-wrap: wrap; gap: 18px 24px; align-items: flex-start; }
+.pixgrid { display: grid; grid-template-columns: repeat(var(--w), var(--px)); gap: 0; border: 1px solid var(--line); background: white; width: max-content; }
+.pix { appearance: none; -webkit-appearance: none; display: block; margin: 0; font-size: 0; background: none; width: var(--px); height: var(--px); border-right: 1px solid rgba(255, 255, 255, .5); border-bottom: 1px solid rgba(255, 255, 255, .5); cursor: pointer; padding: 0; border-top: 0; border-left: 0; }
+.pix.bx { border-right: 2px solid var(--ink); }
+.pix.by { border-bottom: 2px solid var(--ink); }
+.pix.ghost { background: repeating-linear-gradient(135deg, #eef1f4 0 3px, #dce2e8 3px 6px); }
+.pix.unset { background: #f1f4f7; }
+.pix.active { box-shadow: inset 0 0 0 2px var(--accent); }
+.pix.returned { background: repeating-linear-gradient(135deg, #e3e7ec 0 3px, #c7cfd8 3px 6px); }
+.pix.fault { background: var(--bad) !important; }
+.pix.write { box-shadow: inset 0 0 0 2px var(--c-memory); }
+.pix.cpu { box-shadow: inset 0 0 0 2px #9a6b1d; }
+.pix.selected { outline: 2px solid var(--accent); outline-offset: -1px; position: relative; z-index: 1; }
+.imgcap { font-size: 12.5px; color: var(--muted); margin-top: 6px; max-width: 34ch; }
+
+/* ---------------------------------------------------------------- verdict + inspector */
+.verdict { margin-top: 12px; border-radius: 12px; padding: 12px 14px; border: 1px solid var(--line); background: white; display: none; }
+.verdict.show { display: block; }
+.verdict.ok { border-color: var(--good); background: color-mix(in srgb, var(--good) 8%, white); }
+.verdict.bad { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 6%, white); }
+.verdict h3 { margin: 0 0 4px; font-size: 17px; }
+.verdict.ok h3 { color: var(--good); }
+.verdict.bad h3 { color: var(--bad); }
+.verdict p { margin: 0; max-width: 75ch; }
+.verdict .btn { margin-top: 10px; }
+.inspector { margin-top: 12px; font-size: 13.5px; color: var(--muted); }
+.inspector .card { border: 1px solid var(--line); background: white; border-radius: 10px; padding: 10px 12px; color: var(--ink); }
+.inspector h4 { margin: 0 0 4px; font-size: 14px; }
+.inspector .vars { font: 500 12.5px var(--font-code); margin: 0 0 6px; }
+.inspector ol { margin: 0; padding-left: 30px; font: 12.5px/1.6 var(--font-code); max-height: 160px; overflow: auto; }
+
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+}
+
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <p class="wordmark">Thread <span>Lab</span></p>
+    <p class="tagline">Snap together a CUDA kernel from blocks, then watch every GPU thread run it at the same time.</p>
+  </div>
+  <nav class="levels" id="levels" role="tablist" aria-label="Levels"></nav>
+</header>
+<main class="lab">
+  <section class="panel mission" id="mission"></section>
+  <section class="panel palette" id="palette" aria-label="Blocks"></section>
+  <section class="panel kernel" id="kernel" aria-label="Your kernel"></section>
+  <section class="panel stage" id="stage" aria-label="The GPU">
+    <div class="stage-head">
+      <h2>The GPU</h2>
+      <div class="controls">
+        <button class="btn primary" type="button" id="btn-run">Run on GPU</button>
+        <button class="btn" type="button" id="btn-step">Step</button>
+        <button class="btn" type="button" id="btn-cpu">Run CPU loop</button>
+        <button class="btn" type="button" id="btn-reset">Reset</button>
+        <label for="speed">Speed
+          <select id="speed"><option value="slow">Slow</option><option value="normal" selected>Normal</option><option value="fast">Fast</option></select>
+        </label>
+      </div>
+    </div>
+    <div class="launch" id="launch"></div>
+    <div class="ticker" id="ticker" aria-live="polite"></div>
+    <div class="viz" id="viz"></div>
+    <div class="verdict" id="verdict" role="status"></div>
+    <div class="inspector" id="inspector"></div>
+  </section>
+</main>
+<script>
+// Thread Lab engine: a tiny, deterministic model of a CUDA GPU.
+// No DOM here, so it can be tested in Node.
+//
+// Execution model (kept simple on purpose, and explained in the game):
+// - All live threads run statement k together, in lockstep ("step k").
+// - A thread's own writes are visible to it immediately. Writes by OTHER threads
+//   become visible only after a barrier (__syncthreads) or when the kernel ends.
+//   A read that misses another thread's newer value is recorded as "stale".
+// - atomicAdd calls take turns: each one is its own step, and is visible at once.
+// - Reading or writing outside an array faults that thread (it stops).
+const Engine = (() => {
+  class ThreadFault extends Error {
+    constructor(message, info) {
+      super(message);
+      this.info = info;
+    }
+  }
+
+  // ---------------------------------------------------------------- threads
+  function makeThreads(grid, block) {
+    const out = [];
+    for (let by = 0; by < grid.y; by++)
+      for (let bx = 0; bx < grid.x; bx++)
+        for (let ty = 0; ty < block.y; ty++)
+          for (let tx = 0; tx < block.x; tx++) out.push({ id: out.length, bx, by, tx, ty });
+    return out;
+  }
+
+  function threadLabel(level, t) {
+    if (level.dims === 2) return `block (${t.bx}, ${t.by}), thread (${t.tx}, ${t.ty})`;
+    if (level.grid.x === 1) return `thread ${t.tx}`;
+    return `block ${t.bx}, thread ${t.tx}`;
+  }
+
+  // ---------------------------------------------------------------- memory
+  class Memory {
+    constructor(spec) {
+      this.arrays = {};
+      for (const [name, s] of Object.entries(spec)) {
+        this.arrays[name] = {
+          name,
+          kind: s.kind || "global",
+          w: s.w || null,
+          h: s.h || null,
+          len: s.data.length,
+          committed: s.data.slice(),
+          pending: new Map(), // idx -> [{ value, writer }]
+          writers: new Map(), // idx -> Set(thread ids), whole run
+        };
+      }
+      this.conflicts = []; // { arr, idx, writers: [ids], kept }
+    }
+    read(arr, idx, tid) {
+      const A = this.arrays[arr];
+      const pend = A.pending.get(idx);
+      if (pend) {
+        const own = [...pend].reverse().find((p) => p.writer === tid);
+        if (own) return { value: own.value, stale: false };
+        const other = pend.at(-1);
+        return { value: A.committed[idx], stale: true, writer: other.writer, newer: other.value };
+      }
+      return { value: A.committed[idx], stale: false };
+    }
+    write(arr, idx, value, tid) {
+      const A = this.arrays[arr];
+      if (!A.pending.has(idx)) A.pending.set(idx, []);
+      A.pending.get(idx).push({ value, writer: tid });
+      if (!A.writers.has(idx)) A.writers.set(idx, new Set());
+      A.writers.get(idx).add(tid);
+    }
+    atomicAdd(arr, idx, value, tid) {
+      const A = this.arrays[arr];
+      A.committed[idx] = (A.committed[idx] ?? 0) + value;
+      if (!A.writers.has(idx)) A.writers.set(idx, new Set());
+      A.writers.get(idx).add(tid);
+      return A.committed[idx];
+    }
+    commit() {
+      for (const A of Object.values(this.arrays)) {
+        for (const [idx, list] of A.pending) {
+          const kept = list.at(-1);
+          const distinct = [...new Set(list.map((p) => p.writer))];
+          if (distinct.length > 1) this.conflicts.push({ arr: A.name, idx, writers: distinct, kept: kept.writer });
+          A.committed[idx] = kept.value;
+        }
+        A.pending.clear();
+      }
+    }
+    view() {
+      const v = {};
+      for (const A of Object.values(this.arrays)) {
+        const values = A.committed.slice();
+        const pending = new Set();
+        for (const [idx, list] of A.pending) {
+          values[idx] = list.at(-1).value;
+          pending.add(idx);
+        }
+        v[A.name] = { values, pending };
+      }
+      return v;
+    }
+  }
+
+  // ---------------------------------------------------------------- blocks
+  const F = (f) => ({ f }); // a dropdown field
+  const M = (f) => ({ m: f }); // a read-only mirror of a field
+
+  function blockText(def, fields) {
+    return def.parts
+      .map((p) => (typeof p === "string" ? p : fields[p.f ?? p.m] ?? def.fields[p.f ?? p.m]))
+      .join("");
+  }
+
+  const IDX_1D = ["blockIdx.x", "blockDim.x", "threadIdx.x", "gridDim.x"];
+  const IDX_2D = ["blockIdx.x", "blockIdx.y", "blockDim.x", "blockDim.y", "threadIdx.x", "threadIdx.y"];
+
+  function indexBlock(name, defaults, opts) {
+    return {
+      cat: "index",
+      parts: [`int ${name} = `, F("a"), " * ", F("b"), " + ", F("c"), ";"],
+      fields: { a: defaults[0], b: defaults[1], c: defaults[2] },
+      opts: { a: opts, b: opts, c: opts },
+      exec(ctx, f) {
+        ctx.set(name, ctx.builtin(f.a) * ctx.builtin(f.b) + ctx.builtin(f.c));
+      },
+    };
+  }
+
+  // ---------------------------------------------------------------- levels
+  const PI = [3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5, 8, 9, 7, 9, 3, 2, 3, 8, 4, 6, 2, 6, 4, 3, 3, 8, 3];
+  const E = [2, 7, 1, 8, 2, 8, 1, 8, 2, 8, 4, 5, 9, 0, 4, 5, 2, 3, 5, 3, 6, 0, 2, 8, 7, 4, 7, 1];
+  const X16 = [5, 3, 8, 1, 9, 2, 7, 4, 6, 8, 3, 5, 9, 1, 4, 7];
+
+  // 14 x 10 image: the letters G P U, 9 = bright, 1 = background
+  const GPU_ROWS = [
+    "..............",
+    ".###.###..#..#",
+    "#....#..#.#..#",
+    "#....#..#.#..#",
+    "#.##.###..#..#",
+    "#..#.#....#..#",
+    "#..#.#....#..#",
+    ".###.#.....##.",
+    "..............",
+    "..............",
+  ];
+  const IMG_W = 14, IMG_H = 10;
+  const IMG = GPU_ROWS.join("").split("").map((ch) => (ch === "#" ? 9 : 1));
+  const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+  function blurAt(get, x, y) {
+    let sum = 0;
+    for (let dy = -1; dy <= 1; dy++)
+      for (let dx = -1; dx <= 1; dx++) sum += get(clamp(y + dy, 0, IMG_H - 1), clamp(x + dx, 0, IMG_W - 1));
+    return Math.floor((sum + 4) / 9);
+  }
+  const BLURRED = [];
+  for (let y = 0; y < IMG_H; y++)
+    for (let x = 0; x < IMG_W; x++) BLURRED.push(blurAt((r, c) => IMG[r * IMG_W + c], x, y));
+
+  const sum16 = X16.reduce((s, v) => s + v, 0);
+
+  const LEVELS = [
+    {
+      id: "vector-add",
+      number: 1,
+      title: "One thread per element",
+      concept: "Thread indexing",
+      dims: 1,
+      grid: { x: 4, y: 1 },
+      block: { x: 8, y: 1 },
+      n: 28,
+      kernelHeader: ["__global__ void vectorAdd(const int* a, const int* b, int* c, int n) {"],
+      launch: "vectorAdd<<<4, 8>>>(a, b, c, 28);   // 4 blocks × 8 threads = 32 threads",
+      cpuCode: "for (int i = 0; i < 28; ++i) c[i] = a[i] + b[i];",
+      mission:
+        "Add two 28-element arrays with 32 threads. Each thread must work out its own element i, stay inside the arrays, and write c[i] = a[i] + b[i].",
+      hint: "Thread 3 of block 2 should get i = 19, because 2 × 8 + 3 = 19. The last 4 threads have no element to work on.",
+      dataNote: "a holds the first digits of π, b the first digits of e.",
+      palette: ["idx_i", "idx_tid", "guard", "add", "mul"],
+      start: [{ type: "add" }],
+      blocks: {
+        idx_i: indexBlock("i", ["threadIdx.x", "blockDim.x", "blockIdx.x"], IDX_1D),
+        idx_tid: {
+          cat: "index",
+          parts: ["int i = threadIdx.x;"],
+          exec(ctx) {
+            ctx.set("i", ctx.builtin("threadIdx.x"));
+          },
+        },
+        guard: {
+          cat: "control",
+          parts: ["if (i >= n) return;"],
+          exec(ctx) {
+            if (ctx.get("i") >= ctx.n) ctx.ret();
+          },
+        },
+        add: {
+          cat: "memory",
+          parts: ["c[i] = a[i] + b[i];"],
+          exec(ctx) {
+            const i = ctx.get("i");
+            ctx.write("c", i, ctx.read("a", i) + ctx.read("b", i));
+          },
+        },
+        mul: {
+          cat: "memory",
+          parts: ["c[i] = a[i] * b[i];"],
+          exec(ctx) {
+            const i = ctx.get("i");
+            ctx.write("c", i, ctx.read("a", i) * ctx.read("b", i));
+          },
+        },
+      },
+      memory: () => ({ a: { data: PI }, b: { data: E }, c: { data: new Array(28).fill(null) } }),
+      expected: PI.map((v, i) => v + E[i]),
+      cpuSteps: 28,
+    },
+    {
+      id: "image-blur",
+      number: 2,
+      title: "One thread per pixel",
+      concept: "2-D grids",
+      dims: 2,
+      grid: { x: 4, y: 3 },
+      block: { x: 4, y: 4 },
+      w: IMG_W,
+      h: IMG_H,
+      kernelHeader: ["__global__ void blur(const int* in, int* out, int w, int h) {"],
+      launch: "blur<<<dim3(4, 3), dim3(4, 4)>>>(in, out, 14, 10);   // 12 blocks × 16 threads = 192 threads",
+      cpuCode: "for (int y = 0; y < 10; ++y) for (int x = 0; x < 14; ++x) out[y][x] = blur(in, x, y);",
+      mission:
+        "Blur a 14 × 10 image with one thread per pixel. The grid is 4 × 3 blocks of 4 × 4 threads, which is 16 × 12 threads, so some threads fall off the right and bottom edges.",
+      hint: "x comes from the .x variables and y from the .y variables. Threads with x ≥ 14 or y ≥ 10 have no pixel.",
+      dataNote: "Each output pixel is the rounded average of the 3 × 3 input pixels around it.",
+      palette: ["idx_x", "idx_y", "guard2", "blur", "copy", "blurT"],
+      start: [{ type: "idx_x" }, { type: "idx_y" }],
+      blocks: {
+        idx_x: indexBlock("x", ["blockIdx.x", "blockDim.x", "threadIdx.x"], IDX_2D),
+        idx_y: indexBlock("y", ["blockIdx.x", "blockDim.x", "threadIdx.x"], IDX_2D),
+        guard2: {
+          cat: "control",
+          parts: ["if (x >= w || y >= h) return;"],
+          exec(ctx) {
+            if (ctx.get("x") >= IMG_W || ctx.get("y") >= IMG_H) ctx.ret();
+          },
+        },
+        blur: {
+          cat: "memory",
+          parts: ["out[y][x] = average of the 3 × 3 pixels around in[y][x];"],
+          exec(ctx) {
+            const x = ctx.get("x"), y = ctx.get("y");
+            const v = blurAt((r, c) => ctx.read2("in", r, c), x, y);
+            ctx.write2("out", y, x, v);
+          },
+        },
+        copy: {
+          cat: "memory",
+          parts: ["out[y][x] = in[y][x];"],
+          exec(ctx) {
+            const x = ctx.get("x"), y = ctx.get("y");
+            ctx.write2("out", y, x, ctx.read2("in", y, x));
+          },
+        },
+        blurT: {
+          cat: "memory",
+          parts: ["out[x][y] = average of the 3 × 3 pixels around in[x][y];"],
+          exec(ctx) {
+            const x = ctx.get("x"), y = ctx.get("y");
+            ctx.read2("in", x, y); // the swapped coordinates fault here for x >= 10
+            const v = blurAt((r, c) => ctx.read2("in", r, c), y, x);
+            ctx.write2("out", x, y, v);
+          },
+        },
+      },
+      memory: () => ({
+        in: { data: IMG, w: IMG_W, h: IMG_H },
+        out: { data: new Array(IMG_W * IMG_H).fill(null), w: IMG_W, h: IMG_H },
+      }),
+      expected: BLURRED,
+      cpuSteps: IMG_W * IMG_H,
+    },
+    {
+      id: "race",
+      number: 3,
+      title: "Race to the total",
+      concept: "Race conditions and atomics",
+      dims: 1,
+      grid: { x: 2, y: 1 },
+      block: { x: 8, y: 1 },
+      n: 16,
+      kernelHeader: ["__device__ int total = 0;", "__global__ void sum(const int* x, int n) {"],
+      launch: "sum<<<2, 8>>>(x, 16);   // 2 blocks × 8 threads = 16 threads",
+      cpuCode: "for (int i = 0; i < 16; ++i) total += x[i];",
+      mission:
+        "Sixteen threads each add one number to a shared total. The kernel on the left compiles and runs, but its answer is wrong. Run it, find out why, and fix it.",
+      hint: "total += x[i] is really three steps: read total, add, write total back. What if 16 threads read total at the same moment?",
+      dataNote: `The right answer is ${sum16}.`,
+      palette: ["idx_fixed", "guard", "race", "atomic"],
+      start: [{ type: "idx_fixed" }, { type: "race" }],
+      blocks: {
+        idx_fixed: {
+          cat: "index",
+          parts: ["int i = blockIdx.x * blockDim.x + threadIdx.x;"],
+          exec(ctx) {
+            ctx.set("i", ctx.builtin("blockIdx.x") * ctx.builtin("blockDim.x") + ctx.builtin("threadIdx.x"));
+          },
+        },
+        guard: {
+          cat: "control",
+          parts: ["if (i >= n) return;"],
+          exec(ctx) {
+            if (ctx.get("i") >= ctx.n) ctx.ret();
+          },
+        },
+        race: {
+          cat: "memory",
+          parts: ["total += x[i];"],
+          exec(ctx) {
+            const i = ctx.get("i");
+            const v = ctx.read("total", 0) + ctx.read("x", i);
+            ctx.write("total", 0, v);
+          },
+        },
+        atomic: {
+          cat: "sync",
+          parts: ["atomicAdd(&total, x[i]);"],
+          exec(ctx) {
+            const i = ctx.get("i");
+            ctx.atomicAdd("total", 0, ctx.read("x", i));
+          },
+        },
+      },
+      memory: () => ({ x: { data: X16 }, total: { data: [0] } }),
+      expectedTotal: sum16,
+      cpuSteps: 16,
+    },
+    {
+      id: "tree",
+      number: 4,
+      title: "Fast and correct: the tree",
+      concept: "Shared memory and __syncthreads()",
+      dims: 1,
+      grid: { x: 1, y: 1 },
+      block: { x: 16, y: 1 },
+      n: 16,
+      kernelHeader: ["__device__ int total = 0;", "__global__ void treeSum(const int* x) {", "    __shared__ int partial[16];"],
+      launch: "treeSum<<<1, 16>>>(x);   // 1 block × 16 threads",
+      cpuCode: "for (int i = 0; i < 16; ++i) total += x[i];",
+      mission:
+        "Make the sum correct without making threads take turns. Pairs of threads add their values in shared memory, halving the number of active threads each step: 16 values, then 8, 4, 2, 1. Use __syncthreads() so that no thread reads a value before another thread has finished writing it.",
+      hint: "Strides 8, 4, 2, 1, each one followed by __syncthreads(). Thread 0 then copies partial[0] into total.",
+      dataNote: `The right answer is ${sum16}. In this lab, a thread sees another thread's write only after a __syncthreads() (its own writes it sees at once).`,
+      palette: ["tid", "load", "sync", "stride", "final", "raceTotal"],
+      start: [{ type: "tid" }, { type: "load" }],
+      blocks: {
+        tid: {
+          cat: "index",
+          parts: ["int t = threadIdx.x;"],
+          exec(ctx) {
+            ctx.set("t", ctx.builtin("threadIdx.x"));
+          },
+        },
+        load: {
+          cat: "memory",
+          parts: ["partial[t] = x[t];"],
+          exec(ctx) {
+            const t = ctx.get("t");
+            ctx.write("partial", t, ctx.read("x", t));
+          },
+        },
+        sync: { cat: "sync", parts: ["__syncthreads();"], barrier: true, exec() {} },
+        stride: {
+          cat: "memory",
+          parts: ["if (t < ", F("s"), ") partial[t] += partial[t + ", M("s"), "];"],
+          fields: { s: "8" },
+          opts: { s: ["8", "4", "2", "1"] },
+          exec(ctx, f) {
+            const t = ctx.get("t"), s = Number(f.s);
+            if (t < s) ctx.write("partial", t, ctx.read("partial", t) + ctx.read("partial", t + s));
+          },
+        },
+        final: {
+          cat: "memory",
+          parts: ["if (t == 0) total = partial[0];"],
+          exec(ctx) {
+            if (ctx.get("t") === 0) ctx.write("total", 0, ctx.read("partial", 0));
+          },
+        },
+        raceTotal: {
+          cat: "memory",
+          parts: ["total += partial[t];"],
+          exec(ctx) {
+            const t = ctx.get("t");
+            ctx.write("total", 0, ctx.read("total", 0) + ctx.read("partial", t));
+          },
+        },
+      },
+      memory: () => ({ x: { data: X16 }, partial: { data: new Array(16).fill(null), kind: "shared" }, total: { data: [0] } }),
+      expectedTotal: sum16,
+      cpuSteps: 16,
+    },
+  ];
+
+  // ---------------------------------------------------------------- GPU run
+  function runGPU(level, program) {
+    const threads = makeThreads(level.grid, level.block);
+    const mem = new Memory(level.memory());
+    const st = threads.map((t) => ({ ...t, vars: {}, alive: true, returned: false, fault: null, log: [] }));
+    const diag = { faults: [], stale: [], atomics: 0 };
+    const frames = [];
+    let steps = 0;
+
+    const snapshot = (k, label, active, events, extra = {}) => ({
+      k,
+      label,
+      steps,
+      active: new Set(active),
+      events,
+      view: mem.view(),
+      threads: st.map((s) => ({ alive: s.alive, returned: s.returned, fault: s.fault, vars: { ...s.vars } })),
+      ...extra,
+    });
+
+    frames.push(snapshot(-1, "Launch: every thread starts at the top of the kernel", [], []));
+
+    for (let k = 0; k < program.length; k++) {
+      const stmt = program[k];
+      const def = level.blocks[stmt.type];
+      const fields = { ...(def.fields || {}), ...(stmt.fields || {}) };
+      const label = blockText(def, fields);
+      const live = st.filter((s) => s.alive);
+      if (!live.length) break;
+
+      if (def.barrier) {
+        mem.commit();
+        steps++;
+        frames.push(snapshot(k, label, live.map((s) => s.id), [], { barrier: true }));
+        continue;
+      }
+
+      const events = [];
+      const queue = [];
+      for (const s of live) {
+        const ctx = makeCtx(level, s, mem, events, queue, diag, k);
+        try {
+          def.exec(ctx, fields);
+        } catch (e) {
+          if (!(e instanceof ThreadFault)) throw e;
+          s.alive = false;
+          s.fault = e.message;
+          diag.faults.push({ thread: s.id, k, message: e.message, info: e.info });
+          events.push({ t: s.id, kind: "fault", message: e.message, info: e.info });
+          s.log.push(`step ${k + 1}: ${e.message}`);
+        }
+      }
+
+      if (queue.length) {
+        // atomics take turns, one per step
+        frames.push(snapshot(k, label, live.map((s) => s.id), events, { queued: queue.length }));
+        for (const op of queue) {
+          steps++;
+          diag.atomics++;
+          const after = mem.atomicAdd(op.arr, op.idx, op.value, op.t);
+          st[op.t].log.push(`step ${k + 1}: atomicAdd(&${op.arr}, ${op.value}) → ${op.arr} = ${after}`);
+          frames.push(snapshot(k, `${label}  (thread ${st[op.t].tx} of block ${st[op.t].bx} takes its turn)`, [op.t],
+            [{ t: op.t, kind: "atomic", arr: op.arr, idx: op.idx, value: op.value, after }], { atomicTurn: true }));
+        }
+      } else {
+        steps++;
+        frames.push(snapshot(k, label, live.map((s) => s.id), events));
+      }
+    }
+    mem.commit(); // the end of the kernel makes every write visible
+    frames.push(snapshot(program.length, "Kernel finished: all writes are now visible", [], [], { done: true }));
+
+    const result = { level, program, threads: st, mem, diag, frames, steps };
+    result.verdict = judge(level, program, result);
+    return result;
+  }
+
+  function makeCtx(level, s, mem, events, queue, diag, k) {
+    const where = threadLabel(level, s);
+    const fault = (msg, info) => {
+      throw new ThreadFault(msg, info);
+    };
+    return {
+      n: level.n,
+      builtin(name) {
+        switch (name) {
+          case "blockIdx.x": return s.bx;
+          case "blockIdx.y": return s.by;
+          case "threadIdx.x": return s.tx;
+          case "threadIdx.y": return s.ty;
+          case "blockDim.x": return level.block.x;
+          case "blockDim.y": return level.block.y;
+          case "gridDim.x": return level.grid.x;
+          case "gridDim.y": return level.grid.y;
+          default: throw new Error("unknown builtin " + name);
+        }
+      },
+      get(name) {
+        if (!(name in s.vars)) fault(`used ${name} before setting it`, { kind: "undef", name });
+        return s.vars[name];
+      },
+      set(name, v) {
+        s.vars[name] = v;
+        s.log.push(`step ${k + 1}: ${name} = ${v}`);
+        events.push({ t: s.id, kind: "set", name, value: v });
+      },
+      read(arr, idx) {
+        const A = mem.arrays[arr];
+        if (idx < 0 || idx >= A.len)
+          fault(`read ${arr}[${idx}], past the end of ${arr} (it has ${A.len} elements)`, { kind: "oob", arr, idx, op: "read" });
+        const r = mem.read(arr, idx, s.id);
+        if (r.stale) diag.stale.push({ t: s.id, k, arr, idx, writer: r.writer, saw: r.value, newer: r.newer });
+        else if (r.value === null && A.kind === "shared") diag.stale.push({ t: s.id, k, arr, idx, writer: null, saw: null });
+        s.log.push(`step ${k + 1}: read ${arr}[${idx}] = ${r.value === null ? "?" : r.value}${r.stale ? " (old value!)" : ""}`);
+        events.push({ t: s.id, kind: "read", arr, idx, value: r.value, stale: r.stale });
+        return r.value ?? 0;
+      },
+      read2(arr, row, col) {
+        const A = mem.arrays[arr];
+        if (row < 0 || row >= A.h || col < 0 || col >= A.w)
+          fault(`read ${arr}[${row}][${col}], outside the ${A.w} × ${A.h} image`, { kind: "oob", arr, row, col, op: "read" });
+        return this.read(arr, row * A.w + col);
+      },
+      write(arr, idx, v) {
+        const A = mem.arrays[arr];
+        if (idx < 0 || idx >= A.len)
+          fault(`wrote ${arr}[${idx}], past the end of ${arr} (it has ${A.len} elements)`, { kind: "oob", arr, idx, op: "write" });
+        mem.write(arr, idx, v, s.id);
+        s.log.push(`step ${k + 1}: wrote ${arr}[${idx}] = ${v}`);
+        events.push({ t: s.id, kind: "write", arr, idx, value: v });
+      },
+      write2(arr, row, col, v) {
+        const A = mem.arrays[arr];
+        if (row < 0 || row >= A.h || col < 0 || col >= A.w)
+          fault(`wrote ${arr}[${row}][${col}], outside the ${A.w} × ${A.h} image`, { kind: "oob", arr, row, col, op: "write" });
+        this.write(arr, row * A.w + col, v);
+      },
+      atomicAdd(arr, idx, v) {
+        queue.push({ t: s.id, arr, idx, value: v });
+        events.push({ t: s.id, kind: "queue", arr, idx, value: v });
+      },
+      ret() {
+        s.alive = false;
+        s.returned = true;
+        s.log.push(`step ${k + 1}: returned early`);
+        events.push({ t: s.id, kind: "return" });
+      },
+    };
+  }
+
+  // ---------------------------------------------------------------- verdicts
+  const has = (program, type) => program.some((s) => s.type === type);
+  const indexOf = (program, type) => program.findIndex((s) => s.type === type);
+  const fmtList = (xs, max = 4) => (xs.length <= max ? xs.join(", ") : `${xs.slice(0, max).join(", ")} and ${xs.length - max} more`);
+  function ranges(nums) {
+    const s = [...nums].sort((a, b) => a - b);
+    const out = [];
+    for (let i = 0; i < s.length; i++) {
+      let j = i;
+      while (j + 1 < s.length && s[j + 1] === s[j] + 1) j++;
+      out.push(i === j ? `${s[i]}` : `${s[i]}–${s[j]}`);
+      i = j;
+    }
+    return out;
+  }
+
+  function judge(level, program, res) {
+    if (!program.length)
+      return fail("The kernel is empty", "Drag blocks from the palette into the kernel, then press Run on GPU.");
+    const { diag, mem } = res;
+    const L = (t) => threadLabel(level, res.threads[t]);
+
+    // 1. threads that crashed
+    if (diag.faults.length) {
+      const f = diag.faults[0];
+      if (f.info.kind === "undef") {
+        const setter = { i: "int i = …", x: "int x = …", y: "int y = …", t: "int t = …" }[f.info.name];
+        return fail(`Every thread used ${f.info.name} before setting it`,
+          `Put the ${setter} block above the first block that uses ${f.info.name}.`);
+      }
+      const oob = diag.faults.filter((d) => d.info.kind === "oob");
+      const who = oob.map((d) => L(d.thread));
+      const guardType = level.dims === 2 ? "guard2" : "guard";
+      const guardAt = indexOf(program, guardType);
+      let hint;
+      if (level.dims === 2 && has(program, "blurT"))
+        hint = "The swapped block uses x as the row. Rows go with y: out[y][x].";
+      else if (guardAt === -1)
+        hint = level.dims === 2
+          ? "Add the block if (x >= w || y >= h) return; right after computing x and y."
+          : "Add if (i >= n) return; right after computing i, before touching the arrays.";
+      else if (guardAt > oob[0].k)
+        hint = "The bounds check comes too late: move it above the block that reads and writes the arrays.";
+      else hint = "Check the index formula: some threads compute an index that is too large.";
+      return fail(`${oob.length} thread${oob.length > 1 ? "s" : ""} went outside the data`,
+        `For example ${who[0]} ${oob[0].message}. ${hint}`, { who: oob.map((d) => d.thread) });
+    }
+
+    if (level.id === "vector-add" || level.id === "image-blur") {
+      const outName = level.id === "vector-add" ? "c" : "out";
+      const A = mem.arrays[outName];
+      const missing = [], dup = [];
+      for (let i = 0; i < A.len; i++) {
+        const w = A.writers.get(i);
+        if (!w) missing.push(i);
+        else if (w.size > 1) dup.push(i);
+      }
+      const cell = (i) => (level.dims === 2 ? `out[${Math.floor(i / level.w)}][${i % level.w}]` : `c[${i}]`);
+      if (missing.length === A.len)
+        return fail(`Nothing was written to ${outName}`,
+          level.id === "vector-add" ? "Add the block that computes c[i]." : "Add the block that blurs a pixel into out[y][x].");
+      if (dup.length || missing.length) {
+        let msg = "";
+        if (dup.length) msg += `${cell(dup[0])} was written by ${A.writers.get(dup[0]).size} different threads. `;
+        if (missing.length)
+          msg += level.dims === 2
+            ? `${missing.length} of the ${A.len} pixels were never written. `
+            : `c[${fmtList(ranges(missing))}] ${missing.length === 1 ? "was" : "were"} never written. `;
+        let hint = "Every thread needs a different index. ";
+        if (level.dims === 1) {
+          const ib = program.find((s) => s.type === "idx_i");
+          if (has(program, "idx_tid")) hint += "threadIdx.x alone repeats in every block: blocks also need blockIdx.x.";
+          else if (ib) hint += "Which variable tells blocks apart, and how many elements does each block cover?";
+        } else {
+          const yb = program.find((s) => s.type === "idx_y");
+          const yf = { ...level.blocks.idx_y.fields, ...(yb?.fields || {}) };
+          if (yb && Object.values(yf).some((v) => v.endsWith(".x"))) hint += "y should be built from the .y variables only.";
+          else hint += "x uses the .x variables, y the .y variables, in the same pattern as level 1.";
+        }
+        return fail("Some outputs were written twice and others never", msg + hint);
+      }
+      const wrong = [];
+      for (let i = 0; i < A.len; i++) if (A.committed[i] !== level.expected[i]) wrong.push(i);
+      if (wrong.length) {
+        const i = wrong[0];
+        const why = level.id === "vector-add" ? `a[${i}] + b[${i}] = ${level.expected[i]}` : `the 3 × 3 average, ${level.expected[i]}`;
+        return fail(`${wrong.length} output values are wrong`,
+          `${cell(i)} is ${A.committed[i]} but should be ${why}. ${level.id === "vector-add" ? "Use the + block." : "Use the block that averages the 3 × 3 neighbourhood."}`);
+      }
+      const returned = res.threads.filter((t) => t.returned).length;
+      return pass(
+        level.id === "vector-add" ? "All 28 elements are correct" : "Every pixel is blurred correctly",
+        `${res.threads.length} threads ran the kernel at the same time, finishing in ${res.steps} steps. The CPU loop needs ${level.cpuSteps} steps, one per ${level.id === "vector-add" ? "element" : "pixel"}. ${returned} thread${returned === 1 ? "" : "s"} had nothing to do and returned early.`
+      );
+    }
+
+    // summation levels
+    const total = mem.arrays.total.committed[0];
+    const lost = mem.conflicts.filter((c) => c.arr === "total");
+    if (total === level.expectedTotal) {
+      if (level.id === "race")
+        return pass(`total = ${total}: correct`,
+          `But the ${diag.atomics} atomicAdd calls had to take turns, so the kernel took ${res.steps} steps, more than the CPU loop's ${level.cpuSteps}. Level 4 shows how to be correct and fast.`);
+      return pass(`total = ${total}: correct and fast`,
+        `${res.steps} steps, against ${level.cpuSteps} for the CPU loop. Each step halves the active threads, so 1,024 numbers would take about 23 steps with the same pattern, instead of 1,024.`);
+    }
+    if (level.id === "race" && has(program, "race") && has(program, "atomic"))
+      return fail(`total = ${total}, expected ${level.expectedTotal}`,
+        "The kernel still contains total += x[i], whose racing writes land at the end and overwrite the atomic result. Remove that block and keep only atomicAdd.");
+    if (lost.length) {
+      const c = lost[0];
+      const survivor = threadLabel(level, res.threads[c.kept]);
+      return fail(`total = ${total}, expected ${level.expectedTotal}: a race condition`,
+        `${c.writers.length} threads read total at the same moment, each added its own number, and each wrote back. Only the write by ${survivor} survived; ${c.writers.length - 1} updates were lost. ${level.id === "race" ? "Use atomicAdd, which makes read, add and write one indivisible step." : "Let one thread write the finished sum instead: if (t == 0) total = partial[0];"}`);
+    }
+    if (diag.stale.length) {
+      const s0 = diag.stale[0];
+      const loadAt = indexOf(program, "load");
+      if (s0.writer === null && (loadAt === -1 || loadAt > s0.k))
+        return fail(`total = ${total}, expected ${level.expectedTotal}`,
+          "The threads read partial[] before anything was stored in it, so they added garbage. Start by copying the input into shared memory: partial[t] = x[t];",
+          { who: [s0.t] });
+      const reader = threadLabel(level, res.threads[s0.t]);
+      const stepName = blockText(level.blocks[program[s0.k].type], { ...(level.blocks[program[s0.k].type].fields || {}), ...(program[s0.k].fields || {}) });
+      const what = s0.writer === null
+        ? `which no thread had written yet, so it got garbage`
+        : `before ${threadLabel(level, res.threads[s0.writer])}'s new value (${s0.newer}) was visible, so it got the old value`;
+      return fail(`total = ${total}, expected ${level.expectedTotal}: a thread read too early`,
+        `At step ${s0.k + 1} (${stepName}) ${reader} read ${s0.arr}[${s0.idx}] ${what}. Put a __syncthreads() block right before that step, so every thread waits until the writes are visible.`,
+        { who: [s0.t] });
+    }
+    if (total === 0)
+      return fail("total is still 0",
+        level.id === "race" ? "No thread added anything to total." : "Nothing copied the finished sum into total. Add if (t == 0) total = partial[0]; at the end.");
+    return fail(`total = ${total}, expected ${level.expectedTotal}`,
+      "Even with perfect timing, some values are added twice or not at all. Use the strides 8, 4, 2 and 1 once each, largest first.");
+  }
+
+  const pass = (title, message) => ({ ok: true, title, message });
+  const fail = (title, message, extra = {}) => ({ ok: false, title, message, ...extra });
+
+  // ---------------------------------------------------------------- CPU loop
+  function runCPU(level) {
+    const mem = new Memory(level.memory());
+    const frames = [];
+    const view = () => mem.view();
+    if (level.id === "vector-add") {
+      for (let i = 0; i < level.n; i++) {
+        const A = mem.arrays;
+        A.c.committed[i] = A.a.committed[i] + A.b.committed[i];
+        frames.push({ cpu: i, label: `i = ${i}: c[${i}] = ${A.a.committed[i]} + ${A.b.committed[i]}`, steps: i + 1, view: view() });
+      }
+    } else if (level.id === "image-blur") {
+      const A = mem.arrays;
+      for (let y = 0; y < IMG_H; y++)
+        for (let x = 0; x < IMG_W; x++) {
+          A.out.committed[y * IMG_W + x] = blurAt((r, c) => A.in.committed[r * IMG_W + c], x, y);
+          frames.push({ cpu: y * IMG_W + x, label: `y = ${y}, x = ${x}`, steps: y * IMG_W + x + 1, view: view() });
+        }
+    } else {
+      const A = mem.arrays;
+      for (let i = 0; i < level.n; i++) {
+        A.total.committed[0] += A.x.committed[i];
+        frames.push({ cpu: i, label: `i = ${i}: total += ${A.x.committed[i]} → ${A.total.committed[0]}`, steps: i + 1, view: view() });
+      }
+    }
+    return { frames, steps: frames.length };
+  }
+
+  return { LEVELS, runGPU, runCPU, blockText, makeThreads, threadLabel };
+})();
+
+if (typeof module !== "undefined") module.exports = Engine;
+
+</script>
+<script>
+// Thread Lab UI: block palette, drag-and-drop kernel, animated GPU stage.
+(() => {
+  const { LEVELS, runGPU, runCPU, blockText, threadLabel, makeThreads } = Engine;
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  const range = (n) => Array.from({ length: n }, (_, i) => i);
+  const SPEED = { slow: 1300, normal: 750, fast: 280 };
+  const CATS = [
+    ["index", "Indexing", "var(--c-index)"],
+    ["control", "Control", "var(--c-control)"],
+    ["memory", "Memory", "var(--c-memory)"],
+    ["sync", "Sync and atomics", "var(--c-sync)"],
+  ];
+  const PENDING_SHOWN = new Set(["partial", "total"]);
+  const STORE = "threadlab-v1";
+
+  let uidSeq = 1;
+  const newStmt = (type, fields) => ({ uid: uidSeq++, type, fields: { ...(fields || {}) } });
+
+  const state = {
+    level: 0,
+    programs: LEVELS.map((lv) => lv.start.map((s) => newStmt(s.type, s.fields))),
+    done: LEVELS.map(() => false),
+    gpuSteps: LEVELS.map(() => null),
+    run: null, // { kind: "gpu" | "cpu", data, frame, applied }
+    playing: false,
+    timer: null,
+    selected: null,
+    speed: "normal",
+  };
+  const lv = () => LEVELS[state.level];
+  const prog = () => state.programs[state.level];
+  const threadsOf = (level) => makeThreads(level.grid, level.block);
+
+  // ------------------------------------------------------------ persistence
+  function snapshotState() {
+    return {
+      level: state.level,
+      done: state.done,
+      gpuSteps: state.gpuSteps,
+      programs: state.programs.map((p) => p.map((s) => ({ type: s.type, fields: s.fields }))),
+    };
+  }
+  function save() {
+    try { localStorage.setItem(STORE, JSON.stringify(snapshotState())); } catch (e) { /* storage unavailable */ }
+  }
+  function restore(data) {
+    if (!data || !Array.isArray(data.programs)) return;
+    data.programs.forEach((p, i) => {
+      if (LEVELS[i] && Array.isArray(p))
+        state.programs[i] = p.filter((s) => s && LEVELS[i].blocks[s.type]).map((s) => newStmt(s.type, s.fields));
+    });
+    if (Array.isArray(data.done)) state.done = LEVELS.map((_, i) => !!data.done[i]);
+    if (Array.isArray(data.gpuSteps)) state.gpuSteps = LEVELS.map((_, i) => data.gpuSteps[i] ?? null);
+    if (Number.isInteger(data.level) && LEVELS[data.level]) state.level = data.level;
+  }
+
+  // ------------------------------------------------------------ header + mission
+  function renderTabs() {
+    $("levels").innerHTML = LEVELS.map((L, i) =>
+      `<button type="button" class="level-tab${state.done[i] ? " done" : ""}" role="tab" id="tab-${i}" aria-selected="${i === state.level}" data-level="${i}">` +
+      `<span class="num">${L.number}</span><span class="name">${esc(L.title)}</span>` +
+      `<span class="state">${state.done[i] ? "Solved" : esc(L.concept)}</span></button>`).join("");
+  }
+
+  function renderMission() {
+    const L = lv();
+    $("mission").innerHTML =
+      `<p class="eyebrow">Level ${L.number} of ${LEVELS.length} · ${esc(L.concept)}</p>` +
+      `<h1>${esc(L.title)}</h1><p>${esc(L.mission)}</p><p class="note">${esc(L.dataNote)}</p>` +
+      `<details><summary>Hint</summary><p>${esc(L.hint)}</p></details>` +
+      `<details><summary>How this lab models a GPU</summary><ul>` +
+      `<li>All live threads run the same block of your kernel together: one block is one step.</li>` +
+      `<li>A thread sees its own writes at once. Other threads see them only after <code>__syncthreads()</code> or when the kernel ends.</li>` +
+      `<li><code>atomicAdd</code> calls take turns, one per step.</li>` +
+      `<li>Reading or writing outside an array crashes that thread. On a real GPU it is undefined behaviour, and tools like compute-sanitizer report it.</li>` +
+      `<li>The CPU loop handles one element per step on one core. Step counts show the idea; real timings come from the benchmark notebook.</li>` +
+      `</ul></details>`;
+  }
+
+  // ------------------------------------------------------------ blocks
+  function blockHTML(L, stmt, where) {
+    const def = L.blocks[stmt.type];
+    const fields = { ...(def.fields || {}), ...(stmt.fields || {}) };
+    const inKernel = where.inKernel;
+    const parts = def.parts.map((p) => {
+      if (typeof p === "string") return `<span class="txt">${esc(p)}</span>`;
+      if (p.m) return `<span class="slot mirror" data-mirror="${p.m}">${esc(fields[p.m])}</span>`;
+      if (!inKernel) return `<span class="slot">${esc(fields[p.f])}</span>`; // pick values after adding
+      const options = def.opts[p.f].map((o) => `<option${o === fields[p.f] ? " selected" : ""}>${esc(o)}</option>`).join("");
+      return `<select class="slot" id="f-${stmt.uid}-${p.f}" data-field="${p.f}" aria-label="Choose a value">${options}</select>`;
+    }).join("");
+    const label = blockText(def, fields);
+    if (inKernel)
+      return `<li data-uid="${stmt.uid}"><span class="step-no" aria-hidden="true">${where.index + 1}</span>` +
+        `<div class="block cat-${def.cat}" data-uid="${stmt.uid}">${parts}<span class="block-tools">` +
+        `<button type="button" data-act="up" aria-label="Move ${esc(label)} up">↑</button>` +
+        `<button type="button" data-act="down" aria-label="Move ${esc(label)} down">↓</button>` +
+        `<button type="button" data-act="del" aria-label="Remove ${esc(label)}">✕</button></span></div></li>`;
+    return `<div class="block cat-${def.cat}" data-type="${stmt.type}" role="button" tabindex="0" aria-label="Add block: ${esc(label)}">${parts}</div>`;
+  }
+
+  function renderPalette() {
+    const L = lv();
+    let html = `<h2>Blocks</h2><p class="help">Drag a block into your kernel, or click it to add it at the end. Drag a block back here to remove it.</p>`;
+    for (const [cat, name, color] of CATS) {
+      const types = L.palette.filter((t) => L.blocks[t].cat === cat);
+      if (!types.length) continue;
+      html += `<div class="palette-group" style="--dot:${color}">${name}</div><div class="palette-list">` +
+        types.map((t) => blockHTML(L, { type: t, fields: {} }, { inKernel: false })).join("") + `</div>`;
+    }
+    $("palette").innerHTML = html;
+  }
+
+  function renderKernel() {
+    const L = lv();
+    const p = prog();
+    const header = L.kernelHeader
+      .map((line) => esc(line).replace(/\b(__global__|__device__|__shared__|void|int|const)\b/g, '<span class="kw">$1</span>'))
+      .join("\n");
+    $("kernel").innerHTML =
+      `<h2>Your kernel</h2><div class="stack-wrap"><div class="kernel-stack">` +
+      `<div class="hat">${header}</div>` +
+      `<ol id="kernel-list" aria-label="Kernel statements, run top to bottom">${p.map((s, i) => blockHTML(L, s, { inKernel: true, index: i })).join("")}</ol>` +
+      (p.length ? "" : `<div class="empty-drop">Drop blocks here</div>`) +
+      `<div class="cap">}</div></div></div>` +
+      `<div class="kernel-actions"><button class="btn" type="button" id="btn-clear">Clear kernel</button>` +
+      `<button class="btn" type="button" id="btn-restore">Restore starting kernel</button></div>`;
+    markCurrentStatement();
+  }
+
+  function programChanged() {
+    resetRun();
+    renderKernel();
+    save();
+  }
+  function addBlock(type) {
+    prog().push(newStmt(type));
+    programChanged();
+  }
+
+  // ------------------------------------------------------------ drag and drop
+  let drag = null;
+  document.addEventListener("pointerdown", (e) => {
+    if (state.playing) return;
+    const blk = e.target.closest(".block");
+    if (!blk || e.target.closest("select, button")) return;
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    const inKernel = !!blk.closest("#kernel-list");
+    if (!inKernel && !blk.closest("#palette")) return;
+    const r = blk.getBoundingClientRect();
+    drag = {
+      blk, inKernel, uid: inKernel ? Number(blk.dataset.uid) : null, type: blk.dataset.type,
+      x0: e.clientX, y0: e.clientY, offX: e.clientX - r.left, offY: e.clientY - r.top, w: r.width,
+      moved: false, ghost: null, marker: null, index: null, trash: false,
+    };
+    try { blk.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+  });
+  document.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    if (!drag.moved) {
+      if (Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 5) return;
+      beginDrag();
+    }
+    e.preventDefault();
+    drag.ghost.style.left = `${e.clientX - drag.offX}px`;
+    drag.ghost.style.top = `${e.clientY - drag.offY}px`;
+    updateDropTarget(e.clientX, e.clientY);
+  });
+  document.addEventListener("pointerup", (e) => {
+    if (!drag) return;
+    const d = drag;
+    drag = null;
+    if (!d.moved) {
+      if (!d.inKernel) addBlock(d.type);
+      return;
+    }
+    finishDrag(d);
+  });
+  document.addEventListener("pointercancel", () => {
+    if (drag) cleanupDrag(drag);
+    drag = null;
+  });
+
+  function beginDrag() {
+    drag.moved = true;
+    const g = drag.blk.cloneNode(true);
+    g.querySelectorAll("[id]").forEach((n) => n.removeAttribute("id"));
+    g.classList.add("drag-ghost");
+    g.style.width = `${drag.w}px`;
+    document.body.appendChild(g);
+    drag.ghost = g;
+    const m = document.createElement("li");
+    m.className = "drop-marker";
+    m.setAttribute("aria-hidden", "true");
+    drag.marker = m;
+    document.body.classList.add("dragging");
+    if (drag.inKernel) drag.blk.closest("li").classList.add("drag-source");
+  }
+
+  function updateDropTarget(x, y) {
+    const inside = (el) => {
+      const r = el.getBoundingClientRect();
+      return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+    };
+    const pal = $("palette");
+    drag.trash = drag.inKernel && inside(pal);
+    pal.classList.toggle("trash-target", drag.trash);
+    const list = $("kernel-list");
+    if (inside($("kernel"))) {
+      const items = [...list.children].filter((li) => !li.classList.contains("drop-marker") && !li.classList.contains("drag-source"));
+      let index = items.length;
+      for (let i = 0; i < items.length; i++) {
+        const r = items[i].getBoundingClientRect();
+        if (y < r.top + r.height / 2) { index = i; break; }
+      }
+      drag.index = index;
+      const ref = items[index];
+      if (ref) list.insertBefore(drag.marker, ref);
+      else list.appendChild(drag.marker);
+    } else {
+      drag.index = null;
+      drag.marker.remove();
+    }
+  }
+
+  function cleanupDrag(d) {
+    d.ghost?.remove();
+    d.marker?.remove();
+    document.body.classList.remove("dragging");
+    $("palette").classList.remove("trash-target");
+    d.blk.closest("li")?.classList.remove("drag-source");
+  }
+
+  function finishDrag(d) {
+    cleanupDrag(d);
+    const p = prog();
+    if (d.inKernel) {
+      const from = p.findIndex((s) => s.uid === d.uid);
+      if (from < 0) return;
+      if (d.trash) { p.splice(from, 1); programChanged(); return; }
+      if (d.index === null) return;
+      const [s] = p.splice(from, 1);
+      p.splice(d.index, 0, s);
+      programChanged();
+    } else if (d.index !== null) {
+      p.splice(d.index, 0, newStmt(d.type));
+      programChanged();
+    }
+  }
+
+  // ------------------------------------------------------------ kernel events
+  $("kernel").addEventListener("click", (e) => {
+    if (state.playing) return;
+    if (e.target.id === "btn-clear") { state.programs[state.level] = []; programChanged(); return; }
+    if (e.target.id === "btn-restore") {
+      state.programs[state.level] = lv().start.map((s) => newStmt(s.type, s.fields));
+      programChanged();
+      return;
+    }
+    const btn = e.target.closest("button[data-act]");
+    if (!btn) return;
+    const uid = Number(btn.closest("li").dataset.uid);
+    const p = prog();
+    const i = p.findIndex((s) => s.uid === uid);
+    if (i < 0) return;
+    const act = btn.dataset.act;
+    if (act === "del") p.splice(i, 1);
+    if (act === "up" && i > 0) [p[i - 1], p[i]] = [p[i], p[i - 1]];
+    if (act === "down" && i < p.length - 1) [p[i + 1], p[i]] = [p[i], p[i + 1]];
+    programChanged();
+    const again = document.querySelector(`#kernel-list li[data-uid="${uid}"] button[data-act="${act}"]`);
+    again?.focus();
+  });
+  $("kernel").addEventListener("change", (e) => {
+    const sel = e.target.closest("select.slot");
+    if (!sel) return;
+    const li = sel.closest("li");
+    const stmt = prog().find((s) => s.uid === Number(li.dataset.uid));
+    if (!stmt) return;
+    stmt.fields[sel.dataset.field] = sel.value;
+    li.querySelectorAll(`[data-mirror="${sel.dataset.field}"]`).forEach((m) => { m.textContent = sel.value; });
+    resetRun();
+    save();
+  });
+  $("palette").addEventListener("keydown", (e) => {
+    const blk = e.target.closest(".block[data-type]");
+    if (!blk || state.playing) return;
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); addBlock(blk.dataset.type); }
+  });
+
+  // ------------------------------------------------------------ running
+  function currentRaw() {
+    const r = state.run;
+    return r ? r.data.frames[r.frame] : null;
+  }
+  const idleCache = {};
+  function idleFrame() {
+    return (idleCache[state.level] ||= runGPU(lv(), []).frames[0]);
+  }
+  // A frame with everything the renderer needs, for GPU, CPU and idle states.
+  function renderFrame() {
+    const r = state.run;
+    const idle = idleFrame();
+    if (!r) return { ...idle, idle: true };
+    const f = r.data.frames[r.frame];
+    if (r.kind === "cpu") return { ...idle, view: f.view, cpu: f.cpu, label: f.label, steps: f.steps, events: [], active: new Set(), cpuMode: true };
+    return f;
+  }
+  const atEnd = () => state.run && state.run.frame >= state.run.data.frames.length - 1;
+
+  function startRun(kind, paused) {
+    stopTimer();
+    state.run = { kind, data: kind === "gpu" ? runGPU(lv(), prog()) : runCPU(lv()), frame: 0, applied: false };
+    if (paused) { state.playing = false; renderStage(); return; }
+    play();
+  }
+  function play() {
+    if (!state.run) return;
+    if (atEnd()) { finish(); return; }
+    state.playing = true;
+    document.body.classList.add("locked");
+    renderStage();
+    tick();
+  }
+  function tick() {
+    const r = state.run;
+    if (!r || !state.playing) return;
+    if (atEnd()) { finish(); return; }
+    state.timer = setTimeout(() => {
+      r.frame++;
+      if (atEnd()) finish();
+      else { renderStage(); tick(); }
+    }, delayFor(r));
+  }
+  function delayFor(r) {
+    const base = SPEED[state.speed];
+    if (r.kind === "cpu") return Math.max(25, Math.min(base * 0.6, (base * 10) / r.data.frames.length));
+    const next = r.data.frames[r.frame + 1];
+    return next && next.atomicTurn ? base * 0.45 : base;
+  }
+  function stopTimer() {
+    clearTimeout(state.timer);
+    state.timer = null;
+    state.playing = false;
+    document.body.classList.remove("locked");
+  }
+  function pause() { stopTimer(); renderStage(); }
+  function finish() {
+    stopTimer();
+    const r = state.run;
+    if (r && r.kind === "gpu" && !r.applied) {
+      r.applied = true;
+      const v = r.data.verdict;
+      if (v.ok) {
+        state.done[state.level] = true;
+        state.gpuSteps[state.level] = r.data.steps;
+        renderTabs();
+        save();
+      }
+      if (v.who && v.who.length && state.selected === null) state.selected = v.who[0];
+    }
+    renderStage();
+  }
+  function stepOnce() {
+    if (!state.run || state.run.kind !== "gpu" || atEnd()) { startRun("gpu", true); return; }
+    stopTimer();
+    state.run.frame++;
+    if (atEnd()) finish();
+    else renderStage();
+  }
+  function resetRun() {
+    stopTimer();
+    state.run = null;
+    renderStage();
+  }
+
+  // ------------------------------------------------------------ stage
+  function renderStage() {
+    const L = lv();
+    const [code, comment] = L.launch.split("//");
+    $("launch").innerHTML = `${esc(code)}${comment ? `<span class="cm">//${esc(comment)}</span>` : ""}`;
+    renderTicker();
+    renderViz();
+    renderVerdict();
+    renderInspector();
+    updateButtons();
+    markCurrentStatement();
+  }
+
+  function markCurrentStatement() {
+    const f = currentRaw();
+    const k = state.run && state.run.kind === "gpu" && f && !f.done ? f.k : -1;
+    document.querySelectorAll("#kernel-list > li[data-uid]").forEach((li, i) => li.classList.toggle("current", i === k));
+  }
+
+  function updateButtons() {
+    const run = $("btn-run");
+    const r = state.run;
+    if (state.playing) run.textContent = "Pause";
+    else if (r && r.kind === "gpu" && !atEnd()) run.textContent = "Resume";
+    else run.textContent = "Run on GPU";
+    $("btn-cpu").textContent = state.playing && r && r.kind === "cpu" ? "Running CPU loop…" : "Run CPU loop";
+    $("btn-reset").disabled = !r;
+  }
+
+  function renderTicker() {
+    const L = lv();
+    const f = renderFrame();
+    const r = state.run;
+    const nThreads = L.grid.x * L.grid.y * L.block.x * L.block.y;
+    let now;
+    if (!r) now = `<b>Ready.</b> Run on GPU launches ${nThreads} threads; Step goes one block at a time.`;
+    else if (r.kind === "cpu") now = `<b>CPU loop</b> · ${esc(f.label)}`;
+    else if (f.k < 0) now = `<b>Launch</b> · ${nThreads} threads start at the top of the kernel`;
+    else if (f.done) now = `<b>Done</b> · ${esc(f.label)}`;
+    else if (f.barrier) now = `<b>Step ${f.k + 1}</b> · ${esc(f.label)} · ${f.active.size} threads wait here, then all writes become visible`;
+    else {
+      const working = new Set(f.events.filter((e) => e.kind !== "set").map((e) => e.t)).size;
+      const extra = f.atomicTurn ? "" : ` · ${f.active.size} thread${f.active.size === 1 ? "" : "s"} running${working && working < f.active.size ? `, ${working} touching memory` : ""}`;
+      now = `<b>Step ${f.k + 1}</b> · ${esc(f.label)}${extra}`;
+    }
+    const gpuSteps = r && r.kind === "gpu" ? f.steps : state.gpuSteps[state.level];
+    const cpuSteps = r && r.kind === "cpu" ? `${f.steps} of ${L.cpuSteps}` : L.cpuSteps;
+    $("ticker").innerHTML =
+      `<span class="now">${now}</span><span class="counters">` +
+      `<span class="counter gpu">GPU kernel: <b>${gpuSteps ?? "–"}</b> step${gpuSteps === 1 ? "" : "s"}</span>` +
+      `<span class="counter cpu">CPU loop: <b>${cpuSteps}</b> steps</span>` +
+      `<span class="counter">${nThreads} threads</span></span>`;
+  }
+
+  // Index of this frame's memory events, keyed "arr:idx".
+  function eventIndex(f) {
+    const ix = { read: new Set(), write: new Set(), stale: new Set(), fault: new Set() };
+    for (const e of f.events || []) {
+      if (e.kind === "read") ix[e.stale ? "stale" : "read"].add(`${e.arr}:${e.idx}`);
+      if (e.kind === "write" || e.kind === "atomic") ix.write.add(`${e.arr}:${e.idx}`);
+      if (e.kind === "fault" && e.info && e.info.kind === "oob") {
+        const A = e.info;
+        const idx = A.idx !== undefined ? A.idx : null;
+        if (idx !== null) ix.fault.add(`${A.arr}:${idx}`);
+      }
+    }
+    return ix;
+  }
+  // Cells the selected thread touched so far in this run.
+  function mineSet() {
+    const s = new Set();
+    const r = state.run;
+    if (!r || r.kind !== "gpu" || state.selected === null) return s;
+    for (let i = 0; i <= r.frame; i++)
+      for (const e of r.data.frames[i].events)
+        if (e.t === state.selected && (e.kind === "read" || e.kind === "write" || e.kind === "atomic")) s.add(`${e.arr}:${e.idx}`);
+    return s;
+  }
+
+  function chipClass(f, id) {
+    const t = f.threads[id];
+    const c = ["chip"];
+    if (t.fault) c.push("fault");
+    else if (t.returned) c.push("returned");
+    else if (f.active.has(id)) c.push(f.barrier ? "waiting" : "active");
+    if (f.done && state.run && state.run.kind === "gpu") {
+      const conflict = state.run.data.mem.conflicts.find((x) => x.arr === "total");
+      if (conflict && conflict.writers.includes(id)) c.push(conflict.kept === id ? "kept" : "lost");
+    }
+    if (state.selected === id) c.push("selected");
+    return c.join(" ");
+  }
+
+  function cell(f, arr, idx, ix, mine, opts = {}) {
+    const key = `${arr}:${idx}`;
+    if (opts.ghost)
+      return `<span class="cell ghost${ix.fault.has(key) ? " fault" : ""}" title="past the end of ${arr}">${ix.fault.has(key) ? "!" : ""}</span>`;
+    const A = f.view[arr];
+    const v = A.values[idx];
+    const c = ["cell"];
+    if (v === null || v === undefined) c.push("empty");
+    if (ix.stale.has(key)) c.push("stale");
+    else if (ix.read.has(key)) c.push("read");
+    if (ix.write.has(key)) c.push("write");
+    if (PENDING_SHOWN.has(arr) && A.pending.has(idx)) c.push("pending");
+    if (mine.has(key)) c.push("mine");
+    if (f.cpuMode && opts.cpuHit) c.push("cpu");
+    return `<span class="${c.join(" ")}">${v === null || v === undefined ? (arr === "partial" ? "?" : "·") : v}</span>`;
+  }
+
+  const lane = (cols, label, items) =>
+    `<div class="lane" style="--cols:${cols}"><span class="rowlbl">${label}</span>${items.join("")}</div>`;
+
+  function chipRow(L, f, cols, content) {
+    return lane(cols, "thread", threadsOf(L).map((t) =>
+      `<button type="button" class="${chipClass(f, t.id)}" data-thread="${t.id}" aria-label="${esc(threadLabel(L, t))}">${content(t)}</button>`));
+  }
+  function blockRow(L, cols) {
+    if (L.grid.x === 1) return lane(cols, "block", [`<span class="blockbox" style="grid-column: span ${L.block.x}">one block of ${L.block.x} threads</span>`]);
+    return lane(cols, "block", range(L.grid.x).map((b) => `<span class="blockbox" style="grid-column: span ${L.block.x}">blockIdx.x = ${b}</span>`));
+  }
+
+  function legend(items) {
+    return `<div class="legend">${items.map(([style, label]) => `<span><i style="${style}"></i>${label}</span>`).join("")}</div>`;
+  }
+  const LEG_CHIPS = [
+    ["background:var(--accent)", "running this step"],
+    ["background:repeating-linear-gradient(135deg,#e3e7ec 0 4px,#cfd6de 4px 8px)", "returned early"],
+    ["background:var(--bad)", "crashed"],
+  ];
+  const LEG_CELLS = [
+    ["box-shadow:inset 0 0 0 2px var(--accent);background:white", "read"],
+    ["background:color-mix(in srgb, var(--c-memory) 22%, white);border:1px solid var(--c-memory)", "written"],
+  ];
+
+  function renderViz() {
+    const L = lv();
+    const f = renderFrame();
+    const ix = eventIndex(f);
+    const mine = mineSet();
+    let h = "";
+    if (f.cpuMode) h += `<div class="cpu-core">One CPU core · <code>${esc(L.cpuCode)}</code></div>`;
+    if (L.id === "vector-add") h += vizVector(L, f, ix, mine);
+    else if (L.id === "image-blur") h += vizImage(L, f, ix, mine);
+    else h += vizSum(L, f, ix, mine);
+    $("viz").innerHTML = h;
+  }
+
+  function vizVector(L, f, ix, mine) {
+    const cols = L.grid.x * L.block.x;
+    const n = L.n;
+    let h = `<p class="viz-title">Threads (each shows its threadIdx.x)</p>`;
+    h += blockRow(L, cols);
+    h += chipRow(L, f, cols, (t) => t.tx);
+    h += lane(cols, "i", threadsOf(L).map((t) => {
+      const v = f.threads[t.id].vars.i;
+      return `<span class="ival${v !== undefined && v >= n ? " bad" : ""}">${v ?? ""}</span>`;
+    }));
+    h += `<p class="viz-title" style="margin-top:14px">Arrays in GPU memory (n = ${n}; dashed = past the end)</p>`;
+    h += lane(cols, "index", range(cols).map((i) => `<span class="idx${i >= n ? " ghost" : ""}">${i}</span>`));
+    for (const arr of ["a", "b", "c"])
+      h += lane(cols, arr, range(cols).map((i) => cell(f, arr, i, ix, mine, { ghost: i >= n, cpuHit: f.cpu === i })));
+    return h + legend([...LEG_CHIPS, ...LEG_CELLS]);
+  }
+
+  function gray(v) {
+    return `hsl(214 18% ${Math.round(10 + v * 9.6)}%)`;
+  }
+
+  function vizImage(L, f, ix, mine) {
+    const W = L.grid.x * L.block.x, H = L.grid.y * L.block.y;
+    const inV = f.view.in.values, outV = f.view.out.values;
+    const threadAt = {};
+    for (const t of threadsOf(L)) threadAt[`${t.bx * L.block.x + t.tx},${t.by * L.block.y + t.ty}`] = t;
+    let input = "";
+    for (let y = 0; y < L.h; y++)
+      for (let x = 0; x < L.w; x++) {
+        const i = y * L.w + x;
+        const cls = ["pix"];
+        if (ix.read.has(`in:${i}`) || ix.stale.has(`in:${i}`)) cls.push("active");
+        if (mine.has(`in:${i}`)) cls.push("selected");
+        input += `<span class="${cls.join(" ")}" style="background:${gray(inV[i])}" title="in[${y}][${x}] = ${inV[i]}"></span>`;
+      }
+    let grid = "";
+    for (let gy = 0; gy < H; gy++)
+      for (let gx = 0; gx < W; gx++) {
+        const t = threadAt[`${gx},${gy}`];
+        const ts = f.threads[t.id];
+        const inside = gx < L.w && gy < L.h;
+        const i = gy * L.w + gx;
+        const cls = ["pix"];
+        if (gx % L.block.x === L.block.x - 1 && gx !== W - 1) cls.push("bx");
+        if (gy % L.block.y === L.block.y - 1 && gy !== H - 1) cls.push("by");
+        let style = "";
+        if (!inside) cls.push(ts.returned ? "returned" : "ghost");
+        else if (outV[i] === null) cls.push("unset");
+        else style = `background:${gray(outV[i])}`;
+        if (ts.fault) cls.push("fault");
+        else if (f.active.has(t.id) && !f.done) cls.push("active");
+        if (inside && ix.write.has(`out:${i}`)) cls.push("write");
+        if (f.cpuMode && f.cpu === i) cls.push("cpu");
+        if (state.selected === t.id || (inside && mine.has(`out:${i}`))) cls.push("selected");
+        const label = `${threadLabel(L, t)}${inside ? `, pixel (${gx}, ${gy})` : ", no pixel here"}`;
+        grid += `<button type="button" class="${cls.join(" ")}" style="${style}" data-thread="${t.id}" title="${esc(label)}" aria-label="${esc(label)}"></button>`;
+      }
+    return `<div class="images">` +
+      `<div><p class="viz-title">Input image in[y][x]</p><div class="pixgrid" style="--w:${L.w};--px:20px">${input}</div>` +
+      `<p class="imgcap">${L.w} × ${L.h} pixels.</p></div>` +
+      `<div><p class="viz-title">Threads over the output out[y][x]</p><div class="pixgrid" style="--w:${W};--px:20px">${grid}</div>` +
+      `<p class="imgcap">${W} × ${H} threads in ${L.grid.x} × ${L.grid.y} blocks (thick lines). Hatched threads have no pixel. Click one to inspect it.</p></div>` +
+      `</div>` + legend([
+        ["box-shadow:inset 0 0 0 2px var(--accent);background:white", "running this step"],
+        ["box-shadow:inset 0 0 0 2px var(--c-memory);background:white", "written this step"],
+        ["background:repeating-linear-gradient(135deg,#e3e7ec 0 3px,#c7cfd8 3px 6px)", "returned early"],
+        ["background:var(--bad)", "crashed"],
+      ]);
+  }
+
+  function vizSum(L, f, ix, mine) {
+    const cols = L.grid.x * L.block.x;
+    const tree = L.id === "tree";
+    let h = `<p class="viz-title">Threads (each shows its threadIdx.x)</p>`;
+    h += blockRow(L, cols);
+    h += chipRow(L, f, cols, (t) => t.tx);
+    if (!tree)
+      h += lane(cols, "i", threadsOf(L).map((t) => `<span class="ival">${f.threads[t.id].vars.i ?? ""}</span>`));
+    // what each thread wrote to total in this run, so lost updates are visible
+    const r = state.run;
+    if (r && r.kind === "gpu") {
+      const wrote = {};
+      for (let i = 0; i <= r.frame; i++)
+        for (const e of r.data.frames[i].events)
+          if (e.kind === "write" && e.arr === "total") wrote[e.t] = e.value;
+      if (Object.keys(wrote).length)
+        h += lane(cols, "wrote", threadsOf(L).map((t) => `<span class="ival">${wrote[t.id] ?? ""}</span>`));
+    }
+    h += `<p class="viz-title" style="margin-top:14px">${tree ? "Memory: x is global, partial is the block's shared memory" : "Global memory"}</p>`;
+    h += lane(cols, "index", range(cols).map((i) => `<span class="idx">${i}</span>`));
+    h += lane(cols, "x", range(cols).map((i) => cell(f, "x", i, ix, mine, { cpuHit: f.cpu === i })));
+    if (tree) h += lane(cols, "partial", range(cols).map((i) => cell(f, "partial", i, ix, mine)));
+    const total = f.view.total.values[0];
+    const expected = L.expectedTotal;
+    const finished = (f.done && r && r.kind === "gpu") || (f.cpuMode && atEnd());
+    const cls = finished ? (total === expected ? "good" : "bad") : "";
+    let sub = `expected ${expected}`;
+    if (f.atomicTurn) {
+      const turns = r.data.frames.filter((x) => x.atomicTurn && x.k === f.k);
+      sub = `turn ${turns.indexOf(f) + 1} of ${turns.length} · expected ${expected}`;
+    } else if (f.queued) sub = `${f.queued} atomicAdd calls are queued · expected ${expected}`;
+    else if (PENDING_SHOWN.has("total") && f.view.total.pending.has(0) && !f.done)
+      sub = `the new value is not visible to other threads yet · expected ${expected}`;
+    h += `<div class="registers"><div class="register ${cls}${ix.write.has("total:0") ? " flash" : ""}"><div class="lbl">total (global)</div><div class="big">${total ?? 0}</div><div class="sub">${sub}</div></div></div>`;
+    const cellsLegend = [...LEG_CELLS];
+    if (tree || r?.kind === "gpu") cellsLegend.push(["border:1.5px dashed var(--c-sync);background:white", "written, not visible to other threads yet"]);
+    if (tree) cellsLegend.push(["box-shadow:inset 0 0 0 2px var(--bad);background:white", "read an old value"]);
+    const chipsLegend = [LEG_CHIPS[0]];
+    if (tree) chipsLegend.push(["background:color-mix(in srgb, var(--c-sync) 22%, white)", "waiting at __syncthreads()"]);
+    else chipsLegend.push(["box-shadow:inset 0 0 0 2px var(--bad);background:#dbe2ea", "update lost"], ["box-shadow:inset 0 0 0 2px var(--good);background:#dbe2ea", "update kept"]);
+    return h + legend([...chipsLegend, ...cellsLegend]);
+  }
+
+  function renderVerdict() {
+    const el = $("verdict");
+    const r = state.run;
+    if (!r || !atEnd() || state.playing) { el.className = "verdict"; el.innerHTML = ""; return; }
+    if (r.kind === "cpu") {
+      const L = lv();
+      el.className = "verdict show";
+      el.innerHTML = `<h3>The CPU loop needs ${r.data.steps} steps</h3><p>One core handles one ${L.id === "image-blur" ? "pixel" : "element"} per step, so the work grows with the data. ${state.gpuSteps[state.level] ? `Your GPU kernel took ${state.gpuSteps[state.level]} steps.` : "Now run your kernel on the GPU and compare."}</p>`;
+      return;
+    }
+    const v = r.data.verdict;
+    const next = state.level < LEVELS.length - 1;
+    el.className = `verdict show ${v.ok ? "ok" : "bad"}`;
+    el.innerHTML = `<h3>${esc(v.title)}</h3><p>${esc(v.message)}</p>` +
+      (v.ok && next ? `<button class="btn primary" type="button" id="btn-next">Next level: ${esc(LEVELS[state.level + 1].title)}</button>` : "") +
+      (v.ok && !next ? `<p style="margin-top:8px"><b>All four levels solved.</b> The same ideas run the real examples in the tutorial: open the benchmark notebook to time them on a real GPU.</p>` : "");
+  }
+
+  function renderInspector() {
+    const el = $("inspector");
+    const L = lv();
+    if (state.selected === null) {
+      el.innerHTML = `Click any thread to see its own variables, and every read and write it made.`;
+      return;
+    }
+    const t = threadsOf(L)[state.selected];
+    if (!t) { state.selected = null; el.innerHTML = ""; return; }
+    const f = renderFrame();
+    const ts = f.threads[t.id];
+    const ids = L.dims === 2
+      ? `blockIdx = (${t.bx}, ${t.by}) · threadIdx = (${t.tx}, ${t.ty}) · blockDim = (${L.block.x}, ${L.block.y})`
+      : `blockIdx.x = ${t.bx} · threadIdx.x = ${t.tx} · blockDim.x = ${L.block.x}`;
+    const vars = Object.entries(ts.vars).map(([k, v]) => `${k} = ${v}`).join(" · ");
+    const r = state.run;
+    let log = "";
+    if (r && r.kind === "gpu") {
+      const upto = f.done ? Infinity : f.k + 1;
+      const lines = r.data.threads[t.id].log.filter((line) => Number(line.slice(5, line.indexOf(":"))) <= upto);
+      log = lines.length ? `<ol>${lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ol>` : `<p class="vars">Nothing yet.</p>`;
+    } else log = `<p class="vars">Run the kernel to see what this thread does.</p>`;
+    const status = ts.fault ? `crashed: ${ts.fault}` : ts.returned ? "returned early" : "";
+    el.innerHTML = `<div class="card"><h4>${esc(threadLabel(L, t))}${status ? ` · ${esc(status)}` : ""}</h4>` +
+      `<p class="vars">${esc(ids)}${vars ? `<br>${esc(vars)}` : ""}</p>${log}</div>`;
+  }
+
+  // ------------------------------------------------------------ wiring
+  $("btn-run").addEventListener("click", () => {
+    if (state.playing) { pause(); return; }
+    if (state.run && state.run.kind === "gpu" && !atEnd()) { play(); return; }
+    startRun("gpu", false);
+  });
+  $("btn-step").addEventListener("click", stepOnce);
+  $("btn-cpu").addEventListener("click", () => {
+    if (state.playing && state.run?.kind === "cpu") return;
+    startRun("cpu", false);
+  });
+  $("btn-reset").addEventListener("click", resetRun);
+  $("speed").addEventListener("change", (e) => { state.speed = e.target.value; });
+  $("levels").addEventListener("click", (e) => {
+    const tab = e.target.closest("[data-level]");
+    if (tab) setLevel(Number(tab.dataset.level));
+  });
+  $("stage").addEventListener("click", (e) => {
+    if (e.target.id === "btn-next") { setLevel(state.level + 1); return; }
+    const chip = e.target.closest("[data-thread]");
+    if (!chip) return;
+    const id = Number(chip.dataset.thread);
+    state.selected = state.selected === id ? null : id;
+    renderStage();
+  });
+
+  function setLevel(i) {
+    if (!LEVELS[i]) return;
+    stopTimer();
+    state.level = i;
+    state.run = null;
+    state.selected = null;
+    renderAll();
+    save();
+    try { history.replaceState(null, "", `#level-${i + 1}`); } catch (e) { /* ignore */ }
+    window.scrollTo({ top: 0, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+  }
+
+  function renderAll() {
+    renderTabs();
+    renderMission();
+    renderPalette();
+    renderKernel();
+    renderStage();
+  }
+
+  function start(data) {
+    let saved = data && Array.isArray(data.programs) ? data : null;
+    if (!saved) {
+      try { saved = JSON.parse(localStorage.getItem(STORE) || "null"); } catch (e) { saved = null; }
+    }
+    restore(saved);
+    const m = /^#level-([1-4])$/.exec(location.hash);
+    if (m) state.level = Number(m[1]) - 1;
+    renderAll();
+    window.claude?.hot?.snapshot?.(() => snapshotState());
+  }
+  window.addEventListener("hashchange", () => {
+    const m = /^#level-([1-4])$/.exec(location.hash);
+    if (m && Number(m[1]) - 1 !== state.level) setLevel(Number(m[1]) - 1);
+  });
+  window.claude?.hot?.ready ? window.claude.hot.ready(start) : start(window.claude?.hot?.data ?? {});
+})();
+
+</script>
+</body>
+</html>
