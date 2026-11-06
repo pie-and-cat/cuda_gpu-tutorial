@@ -20,6 +20,8 @@
   --c-control: #f2a93b;
   --c-memory: #0e7c6a;
   --c-sync: #b3307d;
+  --c-physics: #6a46c4;
+  --c-host: #a1452b;
   --c-hat: #25303b;
   --good: #1c8048;
   --bad: #c73434;
@@ -76,6 +78,7 @@ code, .mono { font-family: var(--font-code); }
   display: grid; gap: 16px; padding: 16px 24px 32px;
   grid-template-columns: minmax(230px, 270px) minmax(300px, 380px) minmax(0, 1fr);
   grid-template-areas: "mission mission stage" "palette kernel stage";
+  grid-template-rows: auto 1fr; /* a tall stage stretches the second row, not the first */
   align-items: start;
 }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; min-width: 0; }
@@ -88,7 +91,7 @@ code, .mono { font-family: var(--font-code); }
 .kernel { grid-area: kernel; }
 .stage { grid-area: stage; position: sticky; top: 12px; }
 @media (max-width: 1180px) {
-  .lab { grid-template-columns: minmax(220px, 280px) minmax(0, 1fr); grid-template-areas: "mission mission" "palette kernel" "stage stage"; }
+  .lab { grid-template-columns: minmax(220px, 280px) minmax(0, 1fr); grid-template-areas: "mission mission" "palette kernel" "stage stage"; grid-template-rows: none; }
   .stage { position: static; }
 }
 @media (max-width: 700px) {
@@ -122,6 +125,8 @@ code, .mono { font-family: var(--font-code); }
 .block.cat-control { --c: var(--c-control); --fg: var(--ink); }
 .block.cat-memory { --c: var(--c-memory); }
 .block.cat-sync { --c: var(--c-sync); }
+.block.cat-physics { --c: var(--c-physics); }
+.block.cat-host { --c: var(--c-host); }
 .block .txt { white-space: pre-wrap; }
 .slot {
   appearance: none; -webkit-appearance: none; border: 0; border-radius: 999px;
@@ -145,6 +150,7 @@ span.slot { display: inline-block; cursor: grab; }
 }
 .hat::after { content: ""; position: absolute; left: 18px; bottom: -6px; width: 16px; height: 6px; background: var(--c-hat); }
 .hat .kw { color: #9fc0ff; }
+.hat .cm { color: #8fa3b8; }
 #kernel-list { list-style: none; margin: 0; padding: 0; min-height: 52px; }
 #kernel-list > li { margin-top: -6px; position: relative; }
 #kernel-list > li:first-child { margin-top: 0; }
@@ -302,6 +308,37 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 .inspector ol { margin: 0; padding-left: 30px; font: 12.5px/1.6 var(--font-code); max-height: 160px; overflow: auto; }
 
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ---------------------------------------------------------------- physics levels */
+#kernel-list > li.in-loop { margin-left: 18px; }
+#kernel-list > li.in-loop::before {
+  content: ""; position: absolute; left: -11px; top: -2px; bottom: -2px; width: 3px; border-radius: 2px;
+  background: color-mix(in srgb, var(--c-hat) 35%, transparent);
+}
+.block.loop-mark {
+  --c: var(--c-hat); cursor: default; padding-right: 12px !important; font-weight: 500; color: #dfe8f3;
+}
+.phys-canvas { display: block; width: 100%; aspect-ratio: 13 / 9.2; border-radius: 10px; border: 1px solid var(--line); cursor: pointer; background: #e4e9ee; }
+.chip.ball { background: color-mix(in srgb, var(--bc) 85%, white); color: white; }
+.mem-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, 1fr); gap: 10px 14px; margin-top: 12px; }
+@media (max-width: 560px) { .mem-grid { grid-template-columns: minmax(0, 1fr); } }
+.mem-box {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; border: 1px solid var(--line); background: white;
+  border-radius: 8px; padding: 6px 10px; margin-bottom: 6px; font: 500 12.5px/1.4 var(--font-code);
+}
+.mem-box.bad { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 8%, white); }
+.mem-name { color: var(--muted); }
+.mem-val { font-weight: 600; font-variant-numeric: tabular-nums; }
+.mem-box.bad .mem-val { color: var(--bad); }
+.ptr { margin-left: auto; color: var(--accent); font-weight: 600; }
+.rates { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.rate { font-size: 12.5px; padding: 3px 10px; border-radius: 999px; background: var(--bench); font-variant-numeric: tabular-nums; }
+.rate.good { background: color-mix(in srgb, var(--good) 15%, white); color: var(--good); }
+.timeline { display: flex; flex-wrap: wrap; gap: 3px; }
+.timeline .op {
+  width: 18px; height: 22px; border-radius: 4px; background: var(--oc); color: white;
+  display: grid; place-items: center; font: 600 11px var(--font-code);
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
@@ -1071,9 +1108,710 @@ if (typeof module !== "undefined") module.exports = Engine;
 
 </script>
 <script>
+// Thread Lab, levels 5 and 6: the CUDA Balls physics engine, in 2-D.
+//
+// Level 5 runs the student's kernel for every thread and every substep. Blocks of threads run one
+// after another (block 0, then 1, then 2, as a GPU might schedule them); inside a block the threads
+// run each statement in lockstep. A thread that reads another ball's slot after that ball's thread
+// already overwrote it during the same substep is a race: its result depends on block order.
+//
+// Level 6 simulates the CPU-side frame loop: two GPU buffers behind the pos and nextPos pointers,
+// the CPU's copy hostPos, and the screen. It counts launches and copies, and tracks which substep
+// each buffer holds, so it can say exactly what a wrong loop does.
+const Physics = (() => {
+  const E = typeof Engine !== "undefined" ? Engine : require("./engine.js");
+
+  // Same constants as cuda_balls/src/physics.cu, minus friction and the third dimension.
+  const PHYS = Object.freeze({
+    halfW: 6, H: 8, g: 9.81, k: 4000, zeta: 0.11, dt: 1 / 960, drag: 0.05, vmax: 40,
+    substeps: 16, frames: 240, fps: 60, count: 22, blocks: 3, threads: 8,
+    overlapLimit: 0.25, // deepest overlap allowed; correct physics stays well below it
+  });
+  const N = PHYS.count;
+
+  function mulberry32(seed) {
+    let a = seed >>> 0;
+    return () => {
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  const makeBuf = () => ({ px: new Float64Array(N), py: new Float64Array(N), vx: new Float64Array(N), vy: new Float64Array(N) });
+  const copyBuf = (b) => ({ px: b.px.slice(), py: b.py.slice(), vx: b.vx.slice(), vy: b.vy.slice() });
+  const garbageBuf = () => {
+    const b = makeBuf();
+    for (const a of Object.values(b)) a.fill(NaN);
+    return b;
+  };
+
+  // Start: rows of 8 balls high in the box, moving sideways a little.
+  const RADIUS = new Float64Array(N), MASS = new Float64Array(N);
+  const START = makeBuf();
+  {
+    const rnd = mulberry32(2026);
+    for (let i = 0; i < N; i++) {
+      const row = Math.floor(i / 8), col = i % 8;
+      const inRow = Math.min(8, N - row * 8);
+      RADIUS[i] = 0.35 + 0.2 * rnd();
+      MASS[i] = Math.PI * RADIUS[i] * RADIUS[i];
+      START.px[i] = (col - (inRow - 1) / 2) * 1.3 + (rnd() - 0.5) * 0.1;
+      START.py[i] = 4.2 + row * 1.3;
+      START.vx[i] = -2 + 4 * rnd();
+      START.vy[i] = 0;
+    }
+  }
+
+  // ---------------------------------------------------------------- forces
+  // Force from one contact: a spring pushes the bodies apart and a damper takes out energy.
+  // `n` points from the surface towards the body; contacts push, never pull.
+  function addContact(f, nx, ny, overlap, rvx, rvy, m) {
+    const normalSpeed = rvx * nx + rvy * ny;
+    const push = PHYS.k * overlap - 2 * PHYS.zeta * Math.sqrt(PHYS.k * m) * normalSpeed;
+    if (push > 0) {
+      f.x += nx * push;
+      f.y += ny * push;
+    }
+  }
+  function addPair(f, i, p, v, j, qx, qy, wx, wy) {
+    const dx = p.x - qx, dy = p.y - qy;
+    const reach = RADIUS[i] + RADIUS[j];
+    const d2 = dx * dx + dy * dy;
+    if (d2 >= reach * reach || d2 < 1e-10) return;
+    const d = Math.sqrt(d2);
+    const reduced = (MASS[i] * MASS[j]) / (MASS[i] + MASS[j]);
+    addContact(f, dx / d, dy / d, reach - d, v.x - wx, v.y - wy, reduced);
+  }
+  function addWalls(f, i, p, v) {
+    const r = RADIUS[i], m = MASS[i];
+    const gaps = [p.y, PHYS.H - p.y, p.x + PHYS.halfW, PHYS.halfW - p.x];
+    const normals = [[0, 1], [0, -1], [1, 0], [-1, 0]];
+    for (let w = 0; w < 4; w++) if (r > gaps[w]) addContact(f, normals[w][0], normals[w][1], r - gaps[w], v.x, v.y, m);
+  }
+  const gravityAndDrag = (i, v) => ({ x: -v.x * PHYS.drag * MASS[i], y: -PHYS.g * MASS[i] - v.y * PHYS.drag * MASS[i] });
+  function applyForce(i, v, f) {
+    const s = PHYS.dt / MASS[i];
+    let x = v.x + f.x * s, y = v.y + f.y * s;
+    const speed = Math.hypot(x, y);
+    if (speed > PHYS.vmax) {
+      x *= PHYS.vmax / speed;
+      y *= PHYS.vmax / speed;
+    }
+    return { x, y };
+  }
+  const move = (p, v) => ({ x: p.x + v.x * PHYS.dt, y: p.y + v.y * PHYS.dt });
+
+  // The reference substep: the correct kernel, one ball after another.
+  function refStep(cur, next) {
+    for (let i = 0; i < N; i++) {
+      let p = { x: cur.px[i], y: cur.py[i] }, v = { x: cur.vx[i], y: cur.vy[i] };
+      const f = gravityAndDrag(i, v);
+      for (let j = 0; j < N; j++) if (j !== i) addPair(f, i, p, v, j, cur.px[j], cur.py[j], cur.vx[j], cur.vy[j]);
+      addWalls(f, i, p, v);
+      v = applyForce(i, v, f);
+      p = move(p, v);
+      next.px[i] = p.x;
+      next.py[i] = p.y;
+      next.vx[i] = v.x;
+      next.vy[i] = v.y;
+    }
+  }
+
+  // Snapshot layout: [x0, y0, vx0, vy0, x1, ...]
+  function snap(b) {
+    const s = new Float32Array(4 * N);
+    for (let i = 0; i < N; i++) {
+      s[4 * i] = b.px[i];
+      s[4 * i + 1] = b.py[i];
+      s[4 * i + 2] = b.vx[i];
+      s[4 * i + 3] = b.vy[i];
+    }
+    return s;
+  }
+
+  // Correct states by substep number, computed on demand (level 6 draws these).
+  const refCache = { states: [snap(START)], cur: copyBuf(START), next: makeBuf() };
+  function refState(v) {
+    while (refCache.states.length <= v) {
+      refStep(refCache.cur, refCache.next);
+      [refCache.cur, refCache.next] = [refCache.next, refCache.cur];
+      refCache.states.push(snap(refCache.cur));
+    }
+    return refCache.states[v];
+  }
+
+  // Uninitialized memory, drawn as balls scattered anywhere. Deterministic per garbage id.
+  function garbageState(g) {
+    const rnd = mulberry32(9001 + g * 7919);
+    const s = new Float32Array(4 * N);
+    for (let i = 0; i < N; i++) {
+      s[4 * i] = (rnd() - 0.5) * 2 * (PHYS.halfW + 1.5);
+      s[4 * i + 1] = rnd() * (PHYS.H + 3) - 1.5;
+    }
+    return s;
+  }
+
+  // ---------------------------------------------------------------- level 5 blocks
+  const FORCE_SETTER = "float2 f = gravity(i) + airDrag(i, v);";
+  const LOAD = "float2 p = pos[i], v = vel[i];";
+  const kernelBlocks = {
+    idx: {
+      cat: "index",
+      parts: ["int i = blockIdx.x * blockDim.x + threadIdx.x;"],
+      exec(c) {
+        c.set("i", c.builtin("blockIdx.x") * c.builtin("blockDim.x") + c.builtin("threadIdx.x"));
+      },
+    },
+    guard: {
+      cat: "control",
+      parts: ["if (i >= n) return;"],
+      exec(c) {
+        if (c.get("i") >= N) c.ret();
+      },
+    },
+    load: {
+      cat: "memory",
+      parts: [LOAD],
+      exec(c) {
+        const b = c.readBall(c.get("i"));
+        c.set("p", { x: b[0], y: b[1] });
+        c.set("v", { x: b[2], y: b[3] });
+      },
+    },
+    forces: {
+      cat: "physics",
+      parts: [FORCE_SETTER],
+      exec(c) {
+        const i = c.get("i");
+        c.set("f", gravityAndDrag(i, c.get("v")));
+      },
+    },
+    collide: {
+      cat: "physics",
+      parts: ["for (int j = 0; j < n; ++j)\n  if (j != i)\n    f += push(i, j);"],
+      cost: N,
+      exec(c) {
+        const i = c.get("i"), p = c.get("p"), v = c.get("v"), f = c.get("f");
+        for (let j = 0; j < N; j++) {
+          if (j === i) continue;
+          const b = c.readBall(j);
+          addPair(f, i, p, v, j, b[0], b[1], b[2], b[3]);
+        }
+      },
+    },
+    walls: {
+      cat: "physics",
+      parts: ["f += pushFromWalls(i, p, v);"],
+      exec(c) {
+        const i = c.get("i"), p = c.get("p"), v = c.get("v"), f = c.get("f");
+        addWalls(f, i, p, v);
+      },
+    },
+    velocity: {
+      cat: "physics",
+      parts: ["v += f / mass[i] * dt;"],
+      exec(c) {
+        const i = c.get("i"), v = c.get("v"), f = c.get("f");
+        c.set("v", applyForce(i, v, f));
+      },
+    },
+    position: {
+      cat: "physics",
+      parts: ["p += v * dt;"],
+      exec(c) {
+        const p = c.get("p"), v = c.get("v");
+        c.set("p", move(p, v));
+      },
+    },
+    store: {
+      cat: "memory",
+      parts: ["nextPos[i] = p;  nextVel[i] = v;"],
+      exec(c) {
+        const i = c.get("i"), p = c.get("p"), v = c.get("v");
+        c.writeBall("next", i, p, v);
+      },
+    },
+    storeInPlace: {
+      cat: "memory",
+      parts: ["pos[i] = p;  vel[i] = v;"],
+      exec(c) {
+        const i = c.get("i"), p = c.get("p"), v = c.get("v");
+        c.writeBall("cur", i, p, v);
+      },
+    },
+  };
+
+  // ---------------------------------------------------------------- level 5 interpreter
+  class Fault extends Error {
+    constructor(message, info) {
+      super(message);
+      this.info = info;
+    }
+  }
+
+  function makeCtx(t, sim) {
+    const scratch = [0, 0, 0, 0];
+    const fault = (message, info) => {
+      throw new Fault(message, info);
+    };
+    return {
+      builtin(name) {
+        switch (name) {
+          case "blockIdx.x": return t.bx;
+          case "threadIdx.x": return t.tx;
+          case "blockDim.x": return PHYS.threads;
+          case "gridDim.x": return PHYS.blocks;
+          default: throw new Error("unknown builtin " + name);
+        }
+      },
+      get(name) {
+        const v = t.vars[name];
+        if (v === undefined) fault(`used ${name} before setting it`, { kind: "undef", name });
+        return v;
+      },
+      set(name, v) {
+        t.vars[name] = v;
+      },
+      readBall(j) {
+        if (j < 0 || j >= N) fault(`read pos[${j}], past the end of pos (it has ${N} elements)`, { kind: "oob", idx: j, op: "read" });
+        if (j !== t.vars.i && sim.stamp[j] === sim.substep) sim.race(t, j);
+        const B = sim.cur;
+        scratch[0] = B.px[j];
+        scratch[1] = B.py[j];
+        scratch[2] = B.vx[j];
+        scratch[3] = B.vy[j];
+        return scratch;
+      },
+      writeBall(which, i, p, v) {
+        const name = which === "next" ? "nextPos" : "pos";
+        if (i < 0 || i >= N) fault(`wrote ${name}[${i}], past the end of ${name} (it has ${N} elements)`, { kind: "oob", idx: i, op: "write" });
+        const B = which === "next" ? sim.next : sim.cur;
+        B.px[i] = p.x;
+        B.py[i] = p.y;
+        B.vx[i] = v.x;
+        B.vy[i] = v.y;
+        if (which === "next") sim.nextWrites++;
+        else {
+          sim.stamp[i] = sim.substep;
+          sim.inPlaceWrites++;
+          if (sim.substep === 0) sim.inPlaceWriter[i] = t.id;
+        }
+      },
+      ret() {
+        t.alive = false;
+        t.returned = true;
+      },
+    };
+  }
+
+  // Runs `program` for up to `maxFrames` frames, scheduling the blocks in `order`.
+  function simulate(program, order = [0, 1, 2], maxFrames = PHYS.frames) {
+    const defs = program.map((s) => kernelBlocks[s.type]);
+    const threads = [];
+    for (let bx = 0; bx < PHYS.blocks; bx++)
+      for (let tx = 0; tx < PHYS.threads; tx++)
+        threads.push({ id: threads.length, bx, tx, vars: {}, alive: true, returned: false, fault: null, races: 0 });
+    const sim = {
+      cur: copyBuf(START),
+      next: garbageBuf(), // nextPos starts uninitialized
+      stamp: new Int32Array(N).fill(-1),
+      inPlaceWriter: new Int32Array(N).fill(-1),
+      substep: 0,
+      nextWrites: 0,
+      inPlaceWrites: 0,
+      races: 0,
+      firstRace: null,
+      race(t, j) {
+        this.races++;
+        t.races++;
+        if (!this.firstRace) this.firstRace = { thread: t.id, ball: t.vars.i, j, substep: this.substep };
+      },
+    };
+    const ctxs = threads.map((t) => makeCtx(t, sim));
+    const groups = order.map((b) => threads.slice(b * PHYS.threads, (b + 1) * PHYS.threads));
+
+    const frames = [snap(sim.cur)];
+    const faults = [];
+    let firstThreads = null, nothingStored = false, nan = false;
+    let maxOverlap = 0, overlapPair = null, overlapFrame = null;
+    let escaped = null, moved = 0;
+
+    run: for (let fr = 1; fr <= maxFrames; fr++) {
+      for (let s = 0; s < PHYS.substeps; s++) {
+        sim.nextWrites = 0;
+        sim.inPlaceWrites = 0;
+        for (const group of groups) {
+          for (const t of group) {
+            t.vars = {};
+            t.alive = true;
+            t.returned = false;
+          }
+          for (const def of defs)
+            for (const t of group) {
+              if (!t.alive) continue;
+              try {
+                def.exec(ctxs[t.id]);
+              } catch (e) {
+                if (!(e instanceof Fault)) throw e;
+                t.alive = false;
+                t.fault = e.message;
+                faults.push({ thread: t.id, message: e.message, info: e.info, k: defs.indexOf(def) });
+              }
+            }
+        }
+        if (sim.substep === 0) {
+          firstThreads = threads.map((t) => ({ id: t.id, bx: t.bx, tx: t.tx, i: t.vars.i, returned: t.returned, fault: t.fault }));
+          if (faults.length) break run;
+          if (!sim.nextWrites && !sim.inPlaceWrites) {
+            nothingStored = true;
+            break run;
+          }
+        }
+        if (sim.nextWrites) [sim.cur, sim.next] = [sim.next, sim.cur];
+        sim.substep++;
+      }
+      const S = snap(sim.cur);
+      frames.push(S);
+
+      for (let i = 0; i < N; i++) {
+        const x = S[4 * i], y = S[4 * i + 1], r = RADIUS[i];
+        if (!Number.isFinite(x) || !Number.isFinite(y)) nan = true;
+        if (!escaped && (x < -PHYS.halfW - r || x > PHYS.halfW + r || y < -r || y > PHYS.H + r)) escaped = { ball: i, frame: fr };
+        moved = Math.max(moved, Math.hypot(x - START.px[i], y - START.py[i]));
+        for (let j = i + 1; j < N; j++) {
+          const depth = r + RADIUS[j] - Math.hypot(x - S[4 * j], y - S[4 * j + 1]);
+          if (depth > maxOverlap) {
+            maxOverlap = depth;
+            overlapPair = [i, j];
+            overlapFrame = fr;
+          }
+        }
+      }
+      if (nan) break;
+      if (escaped && fr >= escaped.frame + 40) break;
+    }
+
+    return {
+      frames, faults, firstThreads, nothingStored, nan, escaped, moved,
+      maxOverlap, overlapPair, overlapFrame,
+      races: sim.races, firstRace: sim.firstRace, inPlaceWriter: sim.inPlaceWriter,
+      threadRaces: threads.map((t) => t.races),
+    };
+  }
+
+  // Steps per substep: every statement is one step, except the collision loop, which visits every ball.
+  function stepCounts(program) {
+    const cost = (s) => kernelBlocks[s.type]?.cost ?? 1;
+    const gpu = program.reduce((a, s) => a + cost(s), 0);
+    const perBall = program.filter((s) => s.type !== "idx" && s.type !== "guard").reduce((a, s) => a + cost(s), 0);
+    return { gpu, cpu: N * perBall, perBall };
+  }
+
+  // ---------------------------------------------------------------- level 5 verdicts
+  const has = (program, type) => program.some((s) => s.type === type);
+  const at = (program, type) => program.findIndex((s) => s.type === type);
+  const pass = (title, message, extra = {}) => ({ ok: true, title, message, ...extra });
+  const fail = (title, message, extra = {}) => ({ ok: false, title, message, ...extra });
+  const text = (type) => kernelBlocks[type].parts.join("").replace(/\s+/g, " ");
+
+  function judgeKernel(level, program, res, rerun) {
+    if (!program.length) return fail("The kernel is empty", "Drag blocks from the palette into the kernel, then press Run on GPU.");
+    const seen = new Set();
+    for (const s of program) {
+      if (seen.has(s.type))
+        return fail(`${text(s.type)} is in the kernel twice`, "Each part of the physics happens once per substep. Remove the extra copy.");
+      seen.add(s.type);
+    }
+    const L = (id) => E.threadLabel(level, res.firstThreads[id]);
+
+    if (res.faults.length) {
+      const f = res.faults[0];
+      if (f.info.kind === "undef") {
+        const setter = { i: "int i = …", p: LOAD, v: LOAD, f: FORCE_SETTER }[f.info.name];
+        return fail(`Every thread used ${f.info.name} before setting it`,
+          `Put ${setter} above the first block that uses ${f.info.name}.`, { who: res.faults.map((x) => x.thread) });
+      }
+      const oob = res.faults.filter((x) => x.info.kind === "oob");
+      const guardAt = at(program, "guard");
+      const hint = guardAt === -1
+        ? `There are ${N} balls but ${PHYS.blocks * PHYS.threads} threads. Add if (i >= n) return; right after computing i.`
+        : "The bounds check comes too late: move it above the block that reads pos.";
+      return fail(`${oob.length} thread${oob.length > 1 ? "s" : ""} went outside the data`,
+        `For example ${L(oob[0].thread)} ${oob[0].message}. ${hint}`, { who: oob.map((x) => x.thread) });
+    }
+
+    if (res.nothingStored)
+      return fail("Nothing was stored",
+        "Every thread works out its ball's new p and v, then throws them away. Add the block that stores them in nextPos and nextVel.");
+
+    if (res.nan)
+      return fail("The simulation blew up", "Some positions became infinite. Check that every force is added before v is updated.");
+
+    const iv = at(program, "velocity"), ip = at(program, "position");
+    if (res.escaped) {
+      const b = res.escaped.ball;
+      let hint;
+      if (iv === -1) hint = "Nothing applies the forces to the velocity: add v += f / mass[i] * dt; after the force blocks.";
+      else if (!has(program, "walls")) hint = "Nothing stops a ball at the floor and walls: add f += pushFromWalls(i, p, v); before v is updated.";
+      else if (at(program, "walls") > iv) hint = "pushFromWalls runs after v += …, so its force is never used. Move it above the velocity update.";
+      else hint = "Check that the wall force is added before the velocity update.";
+      return fail(`Ball ${b} left the box`, hint, { who: [b] });
+    }
+
+    if (res.moved < 0.05) {
+      let hint;
+      if (ip === -1) hint = "The velocity changes but nothing moves the ball: add p += v * dt; after the velocity update.";
+      else {
+        const st = Math.max(at(program, "store"), at(program, "storeInPlace"));
+        hint = st < ip ? "The store runs before p changes, so it saves the old position. Put the store last." : "Check the order: forces, then v, then p, then store.";
+      }
+      return fail("The balls never move", hint);
+    }
+
+    if (res.maxOverlap > PHYS.overlapLimit) {
+      const [a, b] = res.overlapPair;
+      let hint;
+      if (!has(program, "collide")) hint = "Nothing pushes balls apart: add the for (j …) f += push(i, j); loop before v is updated.";
+      else if (at(program, "collide") > iv) hint = "push(i, j) runs after v += …, so its force is never used. Move the loop above the velocity update.";
+      else hint = "Check that the collision forces are added before the velocity update.";
+      return fail(`Balls ${a} and ${b} passed through each other`,
+        `They overlapped by ${res.maxOverlap.toFixed(2)} units. ${hint}`, { who: [a, b] });
+    }
+
+    if (res.races) {
+      const r0 = res.firstRace;
+      const writer = res.inPlaceWriter[r0.j];
+      const other = rerun();
+      const last = Math.min(res.frames.length, other.frames.length) - 1;
+      let div = 0;
+      for (let i = 0; i < N; i++)
+        div = Math.max(div, Math.hypot(res.frames[last][4 * i] - other.frames[last][4 * i], res.frames[last][4 * i + 1] - other.frames[last][4 * i + 1]));
+      const writerText = writer >= 0 ? `${L(writer)} had already overwritten it` : "its thread had already overwritten it";
+      return fail("A race: the result depends on which block runs first",
+        `${L(r0.thread)} (ball ${r0.ball}) read pos[${r0.j}] after ${writerText} with ball ${r0.j}'s next position, so the two balls were one substep apart. ` +
+        `Run again with the blocks in the opposite order (dashed rings), the balls end up as much as ${div.toFixed(2)} units apart. ` +
+        "Write to nextPos and nextVel instead; the host swaps the buffers after each launch.",
+        { who: [r0.thread], ghost: other.frames, divergence: div });
+    }
+
+    const sc = stepCounts(program);
+    return pass("The balls bounce, stack and stay in the box",
+      `Each of the 22 balls had its own thread, and every thread read only the old positions, so the result is the same in any block order. ` +
+      `One substep took ${sc.gpu} steps on the GPU; one CPU core would need ${N} × ${sc.perBall} = ${sc.cpu}. ` +
+      "At 22 balls a real CPU still keeps up; run cuda_balls --bench to see where your GPU pulls ahead.");
+  }
+
+  function runKernelLevel(level, program) {
+    const res = simulate(program, [0, 1, 2]);
+    const verdict = judgeKernel(level, program, res, () => simulate(program, [2, 1, 0], res.frames.length - 1));
+    const sc = stepCounts(program);
+    return { kind: "physics", level, program, ...res, frames: res.frames, steps: sc.gpu, cpuSteps: sc.cpu, verdict };
+  }
+
+  // ---------------------------------------------------------------- level 6
+  const hostBlocks = {
+    launch: { cat: "physics", parts: ["stepKernel<<<3, 8>>>(pos, vel, nextPos, nextVel, n);"] },
+    swap: { cat: "host", parts: ["swap(pos, nextPos);  swap(vel, nextVel);"] },
+    copyBack: { cat: "memory", parts: ["cudaMemcpy(hostPos, pos, bytes, cudaMemcpyDeviceToHost);"] },
+    upload: { cat: "memory", parts: ["cudaMemcpy(pos, hostPos, bytes, cudaMemcpyHostToDevice);"] },
+    draw: { cat: "host", parts: ["draw(hostPos);"] },
+    loopEnd: { cat: "loop", fixed: true, parts: ["}   // below this: once per frame"] },
+  };
+
+  // Buffer contents are { v: substep } or { g: id } for garbage. They never change once made.
+  function runHost(level, program) {
+    const types = program.map((s) => s.type);
+    const end = types.indexOf("loopEnd");
+    const loopOps = types.slice(0, end), frameOps = types.slice(end + 1);
+    const buf = { A: { v: 0 }, B: { g: 1 } };
+    let pos = "A", next = "B";
+    let host = { v: 0 }, shown = null;
+    let garbage = 1, rewound = false, firstGarbage = null;
+    const timeline = [];
+    for (let s = 0; s < PHYS.substeps; s++) timeline.push(...loopOps);
+    timeline.push(...frameOps);
+
+    const apply = (op) => {
+      if (op === "launch") {
+        const src = buf[pos];
+        buf[next] = src.g ? { g: ++garbage } : { v: src.v + 1 };
+      } else if (op === "swap") [pos, next] = [next, pos];
+      else if (op === "copyBack") host = buf[pos];
+      else if (op === "upload") {
+        if (host.v !== undefined && buf[pos].v !== undefined && host.v < buf[pos].v) rewound = true;
+        buf[pos] = host;
+      } else if (op === "draw") shown = host;
+    };
+
+    const frames = [];
+    for (let f = 0; f < PHYS.frames; f++) {
+      for (const op of timeline) apply(op);
+      const latest = buf[pos];
+      if (firstGarbage === null && (latest.g || (shown && shown.g))) firstGarbage = f;
+      frames.push({ shown, A: buf.A, B: buf.B, pos, host, latest });
+    }
+
+    const per = (t) => timeline.filter((o) => o === t).length;
+    const counts = { launch: per("launch"), swap: per("swap"), copyBack: per("copyBack"), upload: per("upload"), draw: per("draw") };
+    const a = frames[20].latest, b = frames[21].latest;
+    const advance = a.v !== undefined && b.v !== undefined ? b.v - a.v : null;
+    const sh = frames[21].shown;
+    const lag = sh && sh.v !== undefined && b.v !== undefined ? b.v - sh.v : null;
+    const res = { kind: "host", level, program, frames, timeline, counts, advance, lag, rewound, firstGarbage, loopOps, frameOps, steps: null };
+    res.verdict = judgeHost(res);
+    return res;
+  }
+
+  function judgeHost(res) {
+    const { counts: c, loopOps, frameOps, advance, lag } = res;
+    const sec = (n) => (n * PHYS.fps).toLocaleString("en-US");
+    if (!loopOps.length && !frameOps.length)
+      return fail("The frame function is empty", "Drag blocks into it. Blocks above the } run 16 times per frame; blocks below it run once.");
+    if (!c.launch) return fail("Nothing runs the simulation", "Add the stepKernel<<<3, 8>>> launch inside the loop.");
+    if (res.firstGarbage !== null)
+      return fail("The balls turned into garbage",
+        "A swap makes pos point at the nextPos buffer before any kernel has written it, so the GPU reads uninitialized memory. Inside the loop, launch first, then swap.");
+    if (!c.draw) return fail("Nothing is drawn", "Add draw(hostPos); below the }, so each frame ends with a picture.");
+    if (c.draw >= PHYS.substeps)
+      return fail(`Drawing ${sec(c.draw)} times a second`,
+        "draw is inside the loop, so it runs after every substep, but the screen shows only one picture per frame. Move it below the }.");
+    if (c.upload)
+      return res.rewound
+        ? fail("The simulation keeps rewinding",
+          "cudaMemcpy(pos, hostPos, …, cudaMemcpyHostToDevice) overwrites the GPU's newer positions with the CPU's older copy. The balls live on the GPU; the CPU needs a copy only to draw. Remove the upload.")
+        : fail(`${sec(c.upload)} copies a second to the GPU, for nothing`,
+          "The upload sends positions the GPU already has. Every cudaMemcpy crosses the PCIe bus and waits for the GPU to finish. Remove it.");
+    if (!c.copyBack)
+      return fail("The picture never changes",
+        "The GPU is simulating, but draw shows hostPos, the CPU's copy from before the first frame. After the loop, copy pos back: cudaMemcpy(hostPos, pos, bytes, cudaMemcpyDeviceToHost);");
+    if (c.copyBack >= PHYS.substeps)
+      return fail(`Copying ${sec(c.copyBack)} times a second`,
+        "The copy is inside the loop, so it runs after every substep, and each cudaMemcpy makes the CPU wait for the GPU. Only the last copy reaches the screen. Move it below the }.");
+    if (!advance)
+      return fail("The balls never move", c.swap
+        ? "Each launch must be followed by exactly one swap, so the next launch starts from its result. Put the launch, then the swap, inside the loop."
+        : "Every launch reads pos and writes nextPos, but nothing swaps them, so each launch starts from the same positions. Add swap(pos, nextPos); swap(vel, nextVel); right after the launch.");
+    if (advance < PHYS.substeps) {
+      const launchInLoop = loopOps.includes("launch");
+      return fail(`Slow motion: ${advance === 1 ? "16" : (PHYS.substeps / advance).toFixed(1)} times slower than real time`, launchInLoop
+        ? "The swap runs once per frame, so all 16 launches read the same positions and compute the same substep. Move the swap inside the loop, right after the launch."
+        : "The launch is below the }, so it runs once per frame: 60 substeps a second instead of 960. Move the launch and the swap inside the loop.");
+    }
+    if (advance > PHYS.substeps)
+      return fail(`Fast forward: ${(advance / PHYS.substeps).toFixed(0)} times faster than real time`,
+        "The loop runs more than one launch and swap per substep. Keep one launch and one swap inside the loop.");
+    if (c.launch > advance)
+      return fail(`${sec(c.launch - advance)} launches a second are wasted`,
+        "An extra launch recomputes a substep that is already done, because pos has not been swapped yet. Keep one launch per substep.");
+    if (c.copyBack > 1 || c.draw > 1)
+      return fail("Extra work every frame", "Below the loop you need one copy and one draw per frame. Remove the duplicates.");
+    if (lag)
+      return fail("Always one frame behind",
+        "draw runs before the copy, so each frame shows the positions copied in the frame before: 16 substeps old. Copy first, then draw.");
+    return pass("Real time, with one copy per frame",
+      "Every frame: 16 launches and swaps on the GPU, then one copy of the 22 positions to the CPU and one draw. That is 960 launches but only 60 copies a second, because the balls stay on the GPU the whole time. " +
+      "Swapping two pointers costs nothing; no data moves. This is the loop in CUDA Balls: physicsStep, then physicsRead.");
+  }
+
+  // ---------------------------------------------------------------- levels
+  const MODEL_KERNEL = [
+    "Each thread moves one ball forward by one substep, 1/960 of a second. The kernel runs 16 times per frame for 4 seconds.",
+    "Blocks run one after another here: block 0, then 1, then 2. A real GPU may pick any order, or run them at the same time.",
+    "Inside a block, all threads run each statement together, as in levels 1 to 4.",
+    "A thread that reads a ball another thread has already overwritten in this substep sees the future: that is the race to avoid.",
+    "Step counts show the idea: the collision loop costs one step per ball. Real timings come from cuda_balls --bench.",
+  ];
+  const MODEL_HOST = [
+    "This code runs on the CPU. A kernel launch only queues work for the GPU, so the CPU can carry on.",
+    "pos and nextPos are pointers to two GPU buffers. swap exchanges the pointers; no data moves.",
+    "cudaMemcpy waits until the GPU has finished, then moves the data over the PCIe bus. It is the slow call here.",
+    "The display calls frame() 60 times a second, so 16 substeps per frame keep the simulation in real time.",
+  ];
+
+  const kernelLevel = {
+    id: "physics-kernel",
+    kind: "physics",
+    number: 5,
+    title: "A physics engine",
+    concept: "Double buffering",
+    dims: 1,
+    grid: { x: PHYS.blocks, y: 1 },
+    block: { x: PHYS.threads, y: 1 },
+    n: N,
+    kernelHeader: [
+      "__constant__ float radius[22];",
+      "__constant__ float mass[22];",
+      "__global__ void stepKernel(",
+      "    float2* pos, float2* vel,",
+      "    float2* nextPos, float2* nextVel,",
+      "    int n) {",
+    ],
+    launch: "stepKernel<<<3, 8>>>(pos, vel, nextPos, nextVel, 22);   // 960 launches a second",
+    cpuCode: "for (int i = 0; i < 22; ++i) stepBall(i, pos, vel, nextPos, nextVel, 22);",
+    mission:
+      "Write the kernel behind CUDA Balls. Each thread moves one ball forward by 1/960 of a second: add up the forces on it, update its velocity, then its position. The starting kernel drops every ball through the floor. Fix it until the balls bounce off each other and the walls, and the result is the same whichever block the GPU runs first.",
+    hint:
+      "Forces first (gravity, other balls, walls), then v, then p, then store. Every thread reads the other balls' positions, so no thread may overwrite pos while the kernel runs: store into nextPos and nextVel.",
+    dataNote:
+      "pos and vel hold every ball's position and velocity; radius and mass never change. 3 blocks × 8 threads = 24 threads for 22 balls. If your kernel writes back into pos and vel, the host skips its usual swap.",
+    model: MODEL_KERNEL,
+    palette: ["idx", "guard", "load", "forces", "collide", "walls", "velocity", "position", "store", "storeInPlace"],
+    start: ["idx", "guard", "load", "forces", "velocity", "position", "storeInPlace"].map((type) => ({ type })),
+    blocks: kernelBlocks,
+    cpuSteps: null,
+  };
+
+  const hostLevel = {
+    id: "host-loop",
+    kind: "host",
+    number: 6,
+    title: "The time loop",
+    concept: "Host code and copies",
+    dims: 1,
+    grid: { x: PHYS.blocks, y: 1 },
+    block: { x: PHYS.threads, y: 1 },
+    n: N,
+    editorTitle: "Your host code",
+    kernelHeader: [
+      "// CPU code, once per screen frame",
+      "void frame() {",
+      "  for (int s = 0; s < 16; ++s) {",
+    ],
+    launch: "frame();   // the display calls this 60 times a second",
+    mission:
+      "The kernel from level 5 is done. Now write the CPU code that drives it: each screen frame must run 16 substeps on the GPU, then bring the positions back and draw them. The starting code runs, but the picture never changes. Make the balls move in real time, without copying more than you need.",
+    hint:
+      "Inside the loop: launch, then swap. Below the }: copy pos to the CPU, then draw. The GPU keeps its own copy of the balls, so nothing needs to go back to it.",
+    dataNote:
+      "At the start, pos holds the balls and nextPos is uninitialized. Blocks above the } run 16 times per frame; blocks below it run once.",
+    model: MODEL_HOST,
+    catNames: { physics: "GPU work", host: "CPU side" },
+    catOrder: ["physics", "host", "memory"],
+    palette: ["launch", "swap", "copyBack", "upload", "draw"],
+    start: ["launch", "loopEnd", "swap", "draw"].map((type) => ({ type })),
+    blocks: hostBlocks,
+  };
+
+  E.LEVELS.push(kernelLevel, hostLevel);
+
+  function run(level, program) {
+    return level.kind === "host" ? runHost(level, program) : runKernelLevel(level, program);
+  }
+
+  return { PHYS, RADIUS, MASS, START, run, runKernelLevel, runHost, simulate, refState, refStep, garbageState, stepCounts, kernelBlocks, hostBlocks, makeBuf, copyBuf };
+})();
+
+if (typeof module !== "undefined") module.exports = Physics;
+
+</script>
+<script>
 // Thread Lab UI: block palette, drag-and-drop kernel, animated GPU stage.
 (() => {
   const { LEVELS, runGPU, runCPU, blockText, threadLabel, makeThreads } = Engine;
+  const PH = typeof Physics !== "undefined" ? Physics : null; // levels 5 and 6
+  const isSim = (L) => L.kind === "physics" || L.kind === "host";
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
   const range = (n) => Array.from({ length: n }, (_, i) => i);
@@ -1083,6 +1821,8 @@ if (typeof module !== "undefined") module.exports = Engine;
     ["control", "Control", "var(--c-control)"],
     ["memory", "Memory", "var(--c-memory)"],
     ["sync", "Sync and atomics", "var(--c-sync)"],
+    ["physics", "Physics", "var(--c-physics)"],
+    ["host", "CPU side", "var(--c-host)"],
   ];
   const PENDING_SHOWN = new Set(["partial", "total"]);
   const STORE = "threadlab-v1";
@@ -1120,8 +1860,12 @@ if (typeof module !== "undefined") module.exports = Engine;
   function restore(data) {
     if (!data || !Array.isArray(data.programs)) return;
     data.programs.forEach((p, i) => {
-      if (LEVELS[i] && Array.isArray(p))
-        state.programs[i] = p.filter((s) => s && LEVELS[i].blocks[s.type]).map((s) => newStmt(s.type, s.fields));
+      if (!LEVELS[i] || !Array.isArray(p)) return;
+      let list = p.filter((s) => s && LEVELS[i].blocks[s.type]).map((s) => newStmt(s.type, s.fields));
+      // host code must keep exactly one end-of-loop marker
+      if (LEVELS[i].kind === "host" && list.filter((s) => s.type === "loopEnd").length !== 1)
+        list = LEVELS[i].start.map((s) => newStmt(s.type, s.fields));
+      state.programs[i] = list;
     });
     if (Array.isArray(data.done)) state.done = LEVELS.map((_, i) => !!data.done[i]);
     if (Array.isArray(data.gpuSteps)) state.gpuSteps = LEVELS.map((_, i) => data.gpuSteps[i] ?? null);
@@ -1142,12 +1886,13 @@ if (typeof module !== "undefined") module.exports = Engine;
       `<p class="eyebrow">Level ${L.number} of ${LEVELS.length} · ${esc(L.concept)}</p>` +
       `<h1>${esc(L.title)}</h1><p>${esc(L.mission)}</p><p class="note">${esc(L.dataNote)}</p>` +
       `<details><summary>Hint</summary><p>${esc(L.hint)}</p></details>` +
-      `<details><summary>How this lab models a GPU</summary><ul>` +
-      `<li>All live threads run the same block of your kernel together: one block is one step.</li>` +
-      `<li>A thread sees its own writes at once. Other threads see them only after <code>__syncthreads()</code> or when the kernel ends.</li>` +
-      `<li><code>atomicAdd</code> calls take turns, one per step.</li>` +
-      `<li>Reading or writing outside an array crashes that thread. On a real GPU it is undefined behaviour, and tools like compute-sanitizer report it.</li>` +
-      `<li>The CPU loop handles one element per step on one core. Step counts show the idea; real timings come from the benchmark notebook.</li>` +
+      `<details><summary>${L.kind === "host" ? "How this level models the CPU and the GPU" : "How this lab models a GPU"}</summary><ul>` +
+      (L.model ? L.model.map((m) => `<li>${esc(m)}</li>`).join("") :
+        `<li>All live threads run the same block of your kernel together: one block is one step.</li>` +
+        `<li>A thread sees its own writes at once. Other threads see them only after <code>__syncthreads()</code> or when the kernel ends.</li>` +
+        `<li><code>atomicAdd</code> calls take turns, one per step.</li>` +
+        `<li>Reading or writing outside an array crashes that thread. On a real GPU it is undefined behaviour, and tools like compute-sanitizer report it.</li>` +
+        `<li>The CPU loop handles one element per step on one core. Step counts show the idea; real timings come from the benchmark notebook.</li>`) +
       `</ul></details>`;
   }
 
@@ -1164,8 +1909,10 @@ if (typeof module !== "undefined") module.exports = Engine;
       return `<select class="slot" id="f-${stmt.uid}-${p.f}" data-field="${p.f}" aria-label="Choose a value">${options}</select>`;
     }).join("");
     const label = blockText(def, fields);
+    if (inKernel && def.fixed)
+      return `<li data-uid="${stmt.uid}" class="loop-li"><div class="block loop-mark" data-uid="${stmt.uid}" data-fixed="1">${parts}</div></li>`;
     if (inKernel)
-      return `<li data-uid="${stmt.uid}"><span class="step-no" aria-hidden="true">${where.index + 1}</span>` +
+      return `<li data-uid="${stmt.uid}"${where.inLoop ? ' class="in-loop"' : ""}><span class="step-no" aria-hidden="true">${where.number}</span>` +
         `<div class="block cat-${def.cat}" data-uid="${stmt.uid}">${parts}<span class="block-tools">` +
         `<button type="button" data-act="up" aria-label="Move ${esc(label)} up">↑</button>` +
         `<button type="button" data-act="down" aria-label="Move ${esc(label)} down">↓</button>` +
@@ -1175,11 +1922,12 @@ if (typeof module !== "undefined") module.exports = Engine;
 
   function renderPalette() {
     const L = lv();
-    let html = `<h2>Blocks</h2><p class="help">Drag a block into your kernel, or click it to add it at the end. Drag a block back here to remove it.</p>`;
-    for (const [cat, name, color] of CATS) {
+    let html = `<h2>Blocks</h2><p class="help">Drag a block into your ${L.kind === "host" ? "code" : "kernel"}, or click it to add it at the end. Drag a block back here to remove it.</p>`;
+    const cats = L.catOrder ? L.catOrder.map((c) => CATS.find((x) => x[0] === c)) : CATS;
+    for (const [cat, name, color] of cats) {
       const types = L.palette.filter((t) => L.blocks[t].cat === cat);
       if (!types.length) continue;
-      html += `<div class="palette-group" style="--dot:${color}">${name}</div><div class="palette-list">` +
+      html += `<div class="palette-group" style="--dot:${color}">${esc(L.catNames?.[cat] ?? name)}</div><div class="palette-list">` +
         types.map((t) => blockHTML(L, { type: t, fields: {} }, { inKernel: false })).join("") + `</div>`;
     }
     $("palette").innerHTML = html;
@@ -1188,17 +1936,25 @@ if (typeof module !== "undefined") module.exports = Engine;
   function renderKernel() {
     const L = lv();
     const p = prog();
-    const header = L.kernelHeader
-      .map((line) => esc(line).replace(/\b(__global__|__device__|__shared__|void|int|const)\b/g, '<span class="kw">$1</span>'))
-      .join("\n");
+    const highlight = (line) => {
+      const cut = line.indexOf("//");
+      const code = cut < 0 ? line : line.slice(0, cut);
+      return esc(code).replace(/\b(__global__|__device__|__shared__|__constant__|void|int|const|float2|float|for)\b/g, '<span class="kw">$1</span>') +
+        (cut < 0 ? "" : `<span class="cm">${esc(line.slice(cut))}</span>`);
+    };
+    const header = L.kernelHeader.map(highlight).join("\n");
+    const loopEnd = p.findIndex((s) => L.blocks[s.type].fixed);
+    let number = 0;
+    const items = p.map((s, i) => blockHTML(L, s, { inKernel: true, index: i, inLoop: i < loopEnd, number: L.blocks[s.type].fixed ? 0 : ++number }));
+    const host = L.kind === "host";
     $("kernel").innerHTML =
-      `<h2>Your kernel</h2><div class="stack-wrap"><div class="kernel-stack">` +
+      `<h2>${esc(L.editorTitle || "Your kernel")}</h2><div class="stack-wrap"><div class="kernel-stack">` +
       `<div class="hat">${header}</div>` +
-      `<ol id="kernel-list" aria-label="Kernel statements, run top to bottom">${p.map((s, i) => blockHTML(L, s, { inKernel: true, index: i })).join("")}</ol>` +
+      `<ol id="kernel-list" aria-label="${host ? "Host code" : "Kernel statements"}, run top to bottom">${items.join("")}</ol>` +
       (p.length ? "" : `<div class="empty-drop">Drop blocks here</div>`) +
       `<div class="cap">}</div></div></div>` +
-      `<div class="kernel-actions"><button class="btn" type="button" id="btn-clear">Clear kernel</button>` +
-      `<button class="btn" type="button" id="btn-restore">Restore starting kernel</button></div>`;
+      `<div class="kernel-actions"><button class="btn" type="button" id="btn-clear">${host ? "Clear code" : "Clear kernel"}</button>` +
+      `<button class="btn" type="button" id="btn-restore">${host ? "Restore starting code" : "Restore starting kernel"}</button></div>`;
     markCurrentStatement();
   }
 
@@ -1217,7 +1973,7 @@ if (typeof module !== "undefined") module.exports = Engine;
   document.addEventListener("pointerdown", (e) => {
     if (state.playing) return;
     const blk = e.target.closest(".block");
-    if (!blk || e.target.closest("select, button")) return;
+    if (!blk || blk.dataset.fixed || e.target.closest("select, button")) return;
     if (e.pointerType === "mouse" && e.button !== 0) return;
     const inKernel = !!blk.closest("#kernel-list");
     if (!inKernel && !blk.closest("#palette")) return;
@@ -1325,7 +2081,11 @@ if (typeof module !== "undefined") module.exports = Engine;
   // ------------------------------------------------------------ kernel events
   $("kernel").addEventListener("click", (e) => {
     if (state.playing) return;
-    if (e.target.id === "btn-clear") { state.programs[state.level] = []; programChanged(); return; }
+    if (e.target.id === "btn-clear") {
+      state.programs[state.level] = lv().kind === "host" ? [newStmt("loopEnd")] : [];
+      programChanged();
+      return;
+    }
     if (e.target.id === "btn-restore") {
       state.programs[state.level] = lv().start.map((s) => newStmt(s.type, s.fields));
       programChanged();
@@ -1382,9 +2142,18 @@ if (typeof module !== "undefined") module.exports = Engine;
   }
   const atEnd = () => state.run && state.run.frame >= state.run.data.frames.length - 1;
 
+  let runSerial = 0; // changes whenever a run starts or is cleared, so the stage knows to rebuild
   function startRun(kind, paused) {
     stopTimer();
-    state.run = { kind, data: kind === "gpu" ? runGPU(lv(), prog()) : runCPU(lv()), frame: 0, applied: false };
+    runSerial++;
+    const L = lv();
+    if (kind === "cpu" && isSim(L)) { // physics: a note on what one core would do, no animation
+      state.run = { kind: "cpunote", data: { frames: [null] }, frame: 0, applied: true };
+      renderStage();
+      return;
+    }
+    const data = kind === "cpu" ? runCPU(L) : isSim(L) ? PH.run(L, prog()) : runGPU(L, prog());
+    state.run = { kind, data, frame: 0, applied: false };
     if (paused) { state.playing = false; renderStage(); return; }
     play();
   }
@@ -1401,13 +2170,15 @@ if (typeof module !== "undefined") module.exports = Engine;
     if (!r || !state.playing) return;
     if (atEnd()) { finish(); return; }
     state.timer = setTimeout(() => {
-      r.frame++;
+      const skip = isSim(lv()) && state.speed === "fast" ? 2 : 1;
+      r.frame = Math.min(r.frame + skip, r.data.frames.length - 1);
       if (atEnd()) finish();
       else { renderStage(); tick(); }
     }, delayFor(r));
   }
   function delayFor(r) {
     const base = SPEED[state.speed];
+    if (r.data.kind === "physics" || r.data.kind === "host") return state.speed === "slow" ? 1000 / 30 : 1000 / 60;
     if (r.kind === "cpu") return Math.max(25, Math.min(base * 0.6, (base * 10) / r.data.frames.length));
     const next = r.data.frames[r.frame + 1];
     return next && next.atomicTurn ? base * 0.45 : base;
@@ -1444,6 +2215,7 @@ if (typeof module !== "undefined") module.exports = Engine;
   }
   function resetRun() {
     stopTimer();
+    runSerial++;
     state.run = null;
     renderStage();
   }
@@ -1463,22 +2235,28 @@ if (typeof module !== "undefined") module.exports = Engine;
 
   function markCurrentStatement() {
     const f = currentRaw();
-    const k = state.run && state.run.kind === "gpu" && f && !f.done ? f.k : -1;
+    const k = !isSim(lv()) && state.run && state.run.kind === "gpu" && f && !f.done ? f.k : -1;
     document.querySelectorAll("#kernel-list > li[data-uid]").forEach((li, i) => li.classList.toggle("current", i === k));
   }
 
   function updateButtons() {
     const run = $("btn-run");
     const r = state.run;
+    const L = lv();
     if (state.playing) run.textContent = "Pause";
     else if (r && r.kind === "gpu" && !atEnd()) run.textContent = "Resume";
-    else run.textContent = "Run on GPU";
-    $("btn-cpu").textContent = state.playing && r && r.kind === "cpu" ? "Running CPU loop…" : "Run CPU loop";
+    else run.textContent = L.kind === "host" ? "Run" : "Run on GPU";
+    const cpu = $("btn-cpu");
+    cpu.textContent = state.playing && r && r.kind === "cpu" ? "Running CPU loop…" : "Run CPU loop";
+    cpu.disabled = L.kind === "host";
+    cpu.title = L.kind === "host" ? "This level is CPU code already" : "";
+    $("btn-step").title = isSim(L) ? "Advance one frame (16 substeps)" : "Run one block of the kernel";
     $("btn-reset").disabled = !r;
   }
 
   function renderTicker() {
     const L = lv();
+    if (isSim(L)) { $("ticker").innerHTML = simTicker(L); return; }
     const f = renderFrame();
     const r = state.run;
     const nThreads = L.grid.x * L.grid.y * L.block.x * L.block.y;
@@ -1585,6 +2363,8 @@ if (typeof module !== "undefined") module.exports = Engine;
 
   function renderViz() {
     const L = lv();
+    if (isSim(L)) { renderSimViz(L); return; }
+    vizKey = null;
     const f = renderFrame();
     const ix = eventIndex(f);
     const mine = mineSet();
@@ -1713,6 +2493,14 @@ if (typeof module !== "undefined") module.exports = Engine;
     const el = $("verdict");
     const r = state.run;
     if (!r || !atEnd() || state.playing) { el.className = "verdict"; el.innerHTML = ""; return; }
+    if (r.kind === "cpunote") {
+      const ref = PH.stepCounts(CORRECT_KERNEL);
+      el.className = "verdict show";
+      el.innerHTML = `<h3>One CPU core: ${ref.cpu} steps per substep</h3>` +
+        `<p>A CPU loop runs the same stepBall code for ball 0, then ball 1, and so on: ${PH.PHYS.count} balls × ${ref.perBall} steps = ${ref.cpu}, against ${ref.gpu} for the finished kernel on the GPU, where every ball has its own thread. ` +
+        `Step counts only show the shape of the work. A real CPU core still keeps up with a few hundred balls in real time; the GPU pays off with thousands. Run <code>cuda_balls --bench</code> to measure where that happens on your machine.</p>`;
+      return;
+    }
     if (r.kind === "cpu") {
       const L = lv();
       el.className = "verdict show";
@@ -1724,12 +2512,14 @@ if (typeof module !== "undefined") module.exports = Engine;
     el.className = `verdict show ${v.ok ? "ok" : "bad"}`;
     el.innerHTML = `<h3>${esc(v.title)}</h3><p>${esc(v.message)}</p>` +
       (v.ok && next ? `<button class="btn primary" type="button" id="btn-next">Next level: ${esc(LEVELS[state.level + 1].title)}</button>` : "") +
-      (v.ok && !next ? `<p style="margin-top:8px"><b>All four levels solved.</b> The same ideas run the real examples in the tutorial: open the benchmark notebook to time them on a real GPU.</p>` : "");
+      (v.ok && !next ? `<p style="margin-top:8px"><b>${state.done.every(Boolean) ? `All ${LEVELS.length} levels solved.` : "Last level solved."}</b> ` +
+        `Your kernel and loop are the core of <code>cuda_balls</code> in the repository, which runs the same engine in 3-D with thousands of balls. The benchmark notebook times levels 1 to 4 on a real GPU.</p>` : "");
   }
 
   function renderInspector() {
     const el = $("inspector");
     const L = lv();
+    if (isSim(L)) { el.innerHTML = simInspector(L); return; }
     if (state.selected === null) {
       el.innerHTML = `Click any thread to see its own variables, and every read and write it made.`;
       return;
@@ -1754,6 +2544,285 @@ if (typeof module !== "undefined") module.exports = Engine;
       `<p class="vars">${esc(ids)}${vars ? `<br>${esc(vars)}` : ""}</p>${log}</div>`;
   }
 
+  // ------------------------------------------------------------ physics levels (5 and 6)
+  const BLOCK_COLORS = ["#2f62d6", "#0e7c6a", "#c9771f"];
+  const VIEW = { x0: -6.5, x1: 6.5, y0: -0.9, y1: 8.3 }; // world units; the box is x in [-6, 6], y in [0, 8]
+  const CORRECT_KERNEL = ["idx", "guard", "load", "forces", "collide", "walls", "velocity", "position", "store"].map((type) => ({ type }));
+  const OPS = {
+    launch: ["L", "launch", "var(--c-physics)"],
+    swap: ["S", "swap", "var(--c-host)"],
+    copyBack: ["↓", "copy to CPU", "var(--c-memory)"],
+    upload: ["↑", "copy to GPU", "#7a3a8f"],
+    draw: ["D", "draw", "var(--c-hat)"],
+  };
+  let vizKey = null;
+  const simRun = () => (state.run && state.run.kind === "gpu" ? state.run : null);
+  const content = (c) => (!c ? "nothing yet" : c.g === 1 ? "uninitialized" : c.g ? "garbage" : `substep ${c.v.toLocaleString("en-US")}`);
+
+  // What to draw right now: ball states, dashed ghost states, or nothing.
+  function simPicture(L) {
+    const r = simRun();
+    if (L.kind === "physics") {
+      if (!r) return { balls: PH.refState(0) };
+      const ghost = r.data.verdict.ghost;
+      return { balls: r.data.frames[r.frame], ghost: ghost ? ghost[Math.min(r.frame, ghost.length - 1)] : null };
+    }
+    if (!r) return { balls: PH.refState(0), note: "starting positions" };
+    const shown = r.data.frames[r.frame].shown;
+    if (!shown) return { balls: null };
+    return { balls: shown.g ? PH.garbageState(shown.g) : PH.refState(shown.v), garbage: !!shown.g };
+  }
+
+  function paintCanvas() {
+    const cv = $("phys-canvas");
+    if (!cv) return;
+    const L = lv();
+    const dpr = window.devicePixelRatio || 1;
+    const w = cv.clientWidth || 600, h = cv.clientHeight || 420;
+    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
+      cv.width = Math.round(w * dpr);
+      cv.height = Math.round(h * dpr);
+    }
+    const g = cv.getContext("2d");
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const s = w / (VIEW.x1 - VIEW.x0);
+    const X = (x) => (x - VIEW.x0) * s, Y = (y) => (VIEW.y1 - y) * s;
+    const { halfW, H } = PH.PHYS;
+    g.fillStyle = "#e4e9ee";
+    g.fillRect(0, 0, w, h);
+    g.fillStyle = "#ffffff";
+    g.fillRect(X(-halfW), Y(H), 2 * halfW * s, H * s);
+    g.strokeStyle = "#e9edf1";
+    g.lineWidth = 1;
+    for (let x = -halfW + 1; x < halfW; x++) { g.beginPath(); g.moveTo(X(x), Y(0)); g.lineTo(X(x), Y(H)); g.stroke(); }
+    for (let y = 1; y < H; y++) { g.beginPath(); g.moveTo(X(-halfW), Y(y)); g.lineTo(X(halfW), Y(y)); g.stroke(); }
+    g.strokeStyle = "#25303b";
+    g.lineWidth = 3;
+    g.strokeRect(X(-halfW), Y(H), 2 * halfW * s, H * s);
+
+    const pic = simPicture(L);
+    if (!pic.balls) {
+      g.fillStyle = "#586574";
+      g.font = `600 15px "IBM Plex Sans", system-ui, sans-serif`;
+      g.textAlign = "center";
+      g.fillText("Nothing has been drawn yet", w / 2, h / 2);
+      return;
+    }
+    const r = simRun();
+    const done = r && atEnd() && !state.playing;
+    const flagged = new Set(done && !r.data.verdict.ok && L.kind === "physics" ? r.data.verdict.who || [] : []);
+    const B = pic.balls;
+    for (let i = 0; i < PH.PHYS.count; i++) {
+      const x = X(B[4 * i]), y = Y(B[4 * i + 1]), rad = PH.RADIUS[i] * s;
+      g.beginPath();
+      g.arc(x, y, rad, 0, Math.PI * 2);
+      g.globalAlpha = pic.garbage ? 0.55 : 0.9;
+      g.fillStyle = pic.garbage ? "#c73434" : BLOCK_COLORS[Math.floor(i / PH.PHYS.threads)];
+      g.fill();
+      g.globalAlpha = 1;
+      g.lineWidth = 1.5;
+      g.strokeStyle = "rgba(22, 32, 42, .45)";
+      g.stroke();
+      if (rad > 9 && !pic.garbage) {
+        g.fillStyle = "white";
+        g.font = `600 ${Math.round(Math.min(13, rad * 0.75))}px "IBM Plex Mono", ui-monospace, monospace`;
+        g.textAlign = "center";
+        g.textBaseline = "middle";
+        g.fillText(String(i), x, y + 0.5);
+      }
+    }
+    if (pic.ghost) {
+      g.setLineDash([4, 3]);
+      g.lineWidth = 1.5;
+      g.strokeStyle = "#16202a";
+      for (let i = 0; i < PH.PHYS.count; i++) {
+        g.beginPath();
+        g.arc(X(pic.ghost[4 * i]), Y(pic.ghost[4 * i + 1]), PH.RADIUS[i] * s, 0, Math.PI * 2);
+        g.stroke();
+      }
+      g.setLineDash([]);
+    }
+    const ring = (i, color, width) => {
+      g.beginPath();
+      g.arc(X(B[4 * i]), Y(B[4 * i + 1]), PH.RADIUS[i] * s + width, 0, Math.PI * 2);
+      g.lineWidth = width;
+      g.strokeStyle = color;
+      g.stroke();
+    };
+    for (const i of flagged) if (i < PH.PHYS.count) ring(i, "#c73434", 3);
+    const sel = state.selected;
+    if (L.kind === "physics" && sel !== null && sel < PH.PHYS.count) {
+      ring(sel, "#16202a", 3);
+      const x = X(B[4 * sel]), y = Y(B[4 * sel + 1]);
+      const vx = B[4 * sel + 2] * s * 0.12, vy = -B[4 * sel + 3] * s * 0.12; // arrow: 0.12 s of travel
+      if (Math.hypot(vx, vy) > 4) {
+        g.beginPath();
+        g.moveTo(x, y);
+        g.lineTo(x + vx, y + vy);
+        g.lineWidth = 2.5;
+        g.strokeStyle = "#16202a";
+        g.stroke();
+        const a = Math.atan2(vy, vx);
+        g.beginPath();
+        g.moveTo(x + vx, y + vy);
+        g.lineTo(x + vx - 8 * Math.cos(a - 0.45), y + vy - 8 * Math.sin(a - 0.45));
+        g.lineTo(x + vx - 8 * Math.cos(a + 0.45), y + vy - 8 * Math.sin(a + 0.45));
+        g.closePath();
+        g.fillStyle = "#16202a";
+        g.fill();
+      }
+    }
+  }
+
+  function canvasBall(e) {
+    const cv = $("phys-canvas");
+    const pic = simPicture(lv());
+    if (!cv || !pic.balls) return null;
+    const rect = cv.getBoundingClientRect();
+    const s = rect.width / (VIEW.x1 - VIEW.x0);
+    const wx = (e.clientX - rect.left) / s + VIEW.x0, wy = VIEW.y1 - (e.clientY - rect.top) / s;
+    let best = null, bestD = Infinity;
+    for (let i = 0; i < PH.PHYS.count; i++) {
+      const d = Math.hypot(wx - pic.balls[4 * i], wy - pic.balls[4 * i + 1]);
+      if (d < PH.RADIUS[i] + 0.15 && d < bestD) { best = i; bestD = d; }
+    }
+    return best;
+  }
+
+  function renderSimViz(L) {
+    const r = simRun();
+    const key = [state.level, runSerial, state.selected, state.run ? state.run.kind : "idle", r && atEnd() && !state.playing ? "end" : ""].join("|");
+    if (key !== vizKey) {
+      vizKey = key;
+      $("viz").innerHTML = L.kind === "physics" ? vizKernel(L) : vizHostLoop(L);
+    }
+    if (L.kind === "host") $("host-live").innerHTML = hostLive();
+    paintCanvas();
+  }
+
+  function vizKernel(L) {
+    const r = simRun();
+    const cols = PH.PHYS.blocks * PH.PHYS.threads;
+    const first = r ? r.data.firstThreads : null;
+    const cpu = state.run && state.run.kind === "cpunote";
+    let h = cpu ? `<div class="cpu-core">One CPU core · <code>${esc(L.cpuCode)}</code></div>` : "";
+    h += `<p class="viz-title">The box, 12 × 8 units · each ball is coloured by the block whose thread moves it</p>`;
+    h += `<canvas id="phys-canvas" class="phys-canvas" role="img" aria-label="The balls in the box. Click a ball to inspect its thread."></canvas>`;
+    h += `<p class="viz-title" style="margin-top:12px">Threads · each chip shows threadIdx.x</p>`;
+    h += blockRow(L, cols);
+    h += lane(cols, "thread", threadsOf(L).map((t) => {
+      const ft = first ? first[t.id] : null;
+      const c = ["chip"];
+      let style = "";
+      if (ft && ft.fault) c.push("fault");
+      else if (t.id >= PH.PHYS.count && ft) c.push("returned");
+      else if (t.id < PH.PHYS.count) { c.push("ball"); style = ` style="--bc:${BLOCK_COLORS[t.bx]}"`; }
+      if (state.selected === t.id) c.push("selected");
+      return `<button type="button" class="${c.join(" ")}"${style} data-thread="${t.id}" aria-label="${esc(threadLabel(L, t))}">${t.tx}</button>`;
+    }));
+    h += lane(cols, "ball i", threadsOf(L).map((t) => {
+      const ft = first ? first[t.id] : null;
+      const i = ft ? ft.i : t.id < PH.PHYS.count ? t.id : undefined;
+      return `<span class="ival${i !== undefined && i >= PH.PHYS.count ? " bad" : ""}">${i ?? ""}</span>`;
+    }));
+    const items = BLOCK_COLORS.map((c, b) => [`background:${c}`, `block ${b}`]);
+    items.push(["background:repeating-linear-gradient(135deg,#e3e7ec 0 4px,#cfd6de 4px 8px)", "no ball: returns early"]);
+    if (r && r.data.faults.length) items.push(["background:var(--bad)", "crashed"]);
+    if (r && r.data.verdict.ghost) items.push(["border:1.5px dashed var(--ink);border-radius:50%;background:white", "same kernel, blocks run in reverse order"]);
+    return h + legend(items);
+  }
+
+  function vizHostLoop(L) {
+    const ops = [];
+    const p = prog().map((s) => s.type);
+    const end = p.indexOf("loopEnd");
+    for (let s = 0; s < PH.PHYS.substeps; s++) ops.push(...p.slice(0, end));
+    ops.push(...p.slice(end + 1));
+    const used = [...new Set(ops)];
+    let h = `<p class="viz-title">The screen · what draw(hostPos) shows</p>`;
+    h += `<canvas id="phys-canvas" class="phys-canvas" role="img" aria-label="The picture on screen"></canvas>`;
+    h += `<div id="host-live"></div>`;
+    h += `<p class="viz-title" style="margin-top:14px">One call of frame(), in order · ${ops.length} operation${ops.length === 1 ? "" : "s"}</p>`;
+    h += ops.length
+      ? `<div class="timeline">${ops.map((o) => `<span class="op" style="--oc:${OPS[o][2]}" title="${esc(OPS[o][1])}">${OPS[o][0]}</span>`).join("")}</div>`
+      : `<p class="imgcap">Empty.</p>`;
+    if (used.length) h += legend(used.map((o) => [`background:${OPS[o][2]}`, `${OPS[o][0]} ${OPS[o][1]}`]));
+    return h;
+  }
+
+  // Buffers, pointers and rates for the current frame of level 6.
+  function hostLive() {
+    const r = simRun();
+    const f = r ? r.data.frames[r.frame] : { A: { v: 0 }, B: { g: 1 }, pos: "A", host: { v: 0 }, shown: null };
+    const box = (name, c, ptr) =>
+      `<div class="mem-box${c && c.g ? " bad" : ""}"><span class="mem-name">${name}</span><span class="mem-val">${esc(content(c))}</span>${ptr ? `<span class="ptr">← ${ptr}</span>` : ""}</div>`;
+    let h = `<div class="mem-grid">` +
+      `<div><p class="viz-title">GPU memory</p>${box("buffer A", f.A, f.pos === "A" ? "pos" : "nextPos")}${box("buffer B", f.B, f.pos === "B" ? "pos" : "nextPos")}</div>` +
+      `<div><p class="viz-title">CPU memory</p>${box("hostPos", f.host)}</div>` +
+      `<div><p class="viz-title">Screen</p>${box("picture", f.shown)}</div></div>`;
+    if (r) {
+      const c = r.data.counts, sec = (n) => (n * PH.PHYS.fps).toLocaleString("en-US");
+      const speed = r.data.advance === null ? "–" : `${(r.data.advance / PH.PHYS.substeps).toFixed(2)}×`;
+      h += `<div class="rates">` +
+        [["kernel launches", sec(c.launch)], ["swaps", sec(c.swap)], ["copies to the CPU", sec(c.copyBack)], ["copies to the GPU", sec(c.upload)], ["draws", sec(c.draw)]]
+          .map(([k, v]) => `<span class="rate"><b>${v}</b> ${k} a second</span>`).join("") +
+        `<span class="rate${r.data.advance === PH.PHYS.substeps ? " good" : ""}"><b>${speed}</b> real-time speed</span></div>`;
+    }
+    return h;
+  }
+
+  function simTicker(L) {
+    const r = simRun();
+    const P = PH.PHYS;
+    let now, counters;
+    if (L.kind === "physics") {
+      const sc = PH.stepCounts(prog());
+      if (state.run && state.run.kind === "cpunote") now = "<b>CPU loop</b> · one core, one ball after another";
+      else if (!r) now = `<b>Ready.</b> Run on GPU launches ${P.blocks * P.threads} threads ${P.substeps} times per frame, for 4 seconds.`;
+      else if (r.data.frames.length === 1) now = "<b>Stopped</b> in the first substep";
+      else {
+        const early = r.data.frames.length - 1 < P.frames && atEnd() ? " · stopped early" : "";
+        now = `<b>Frame ${r.frame} of ${P.frames}</b> · ${(r.frame / P.fps).toFixed(2)} s simulated · ${(r.frame * P.substeps).toLocaleString("en-US")} launches${early}`;
+      }
+      counters = `<span class="counter gpu">GPU kernel: <b>${sc.gpu}</b> steps per substep</span>` +
+        `<span class="counter cpu">CPU loop: <b>${sc.cpu}</b> steps per substep</span>` +
+        `<span class="counter">${P.blocks * P.threads} threads</span>`;
+    } else {
+      if (!r) now = `<b>Ready.</b> Run calls frame() ${P.fps} times a second, for 4 seconds.`;
+      else {
+        const f = r.data.frames[r.frame];
+        now = `<b>Frame ${r.frame + 1} of ${P.frames}</b> · ${((r.frame + 1) / P.fps).toFixed(2)} s · the screen shows ${esc(content(f.shown))}`;
+      }
+      counters = `<span class="counter gpu">${P.substeps} substeps of 1/960 s per frame</span><span class="counter">${P.fps} frames a second</span>`;
+    }
+    return `<span class="now">${now}</span><span class="counters">${counters}</span>`;
+  }
+
+  function simInspector(L) {
+    if (L.kind === "host")
+      return "Step advances one frame. Watch which substep each buffer holds, and where pos and nextPos point.";
+    if (state.selected === null) return "Click a ball or a thread to see its position, velocity and what it read.";
+    const t = threadsOf(L)[state.selected];
+    if (!t) return "";
+    const r = simRun();
+    const ft = r ? r.data.firstThreads[t.id] : null;
+    const head = `${threadLabel(L, t)}`;
+    if (ft && ft.fault) return `<div class="card"><h4>${esc(head)} · crashed</h4><p class="vars">${esc(ft.fault)}</p></div>`;
+    if (t.id >= PH.PHYS.count)
+      return `<div class="card"><h4>${esc(head)} · no ball</h4><p class="vars">i = ${t.id}, and the last ball is 21. ${ft && ft.returned ? "It returned early." : "It must return before touching pos."}</p></div>`;
+    const B = simPicture(L).balls, i = t.id;
+    const fmt = (v) => (v >= 0 ? " " : "") + v.toFixed(2);
+    let h = `<div class="card"><h4>${esc(head)} · ball ${i}</h4><p class="vars">` +
+      `p = (${fmt(B[4 * i])}, ${fmt(B[4 * i + 1])}) · v = (${fmt(B[4 * i + 2])}, ${fmt(B[4 * i + 3])})<br>` +
+      `radius = ${PH.RADIUS[i].toFixed(2)} · mass = ${PH.MASS[i].toFixed(2)}</p>`;
+    if (r && r.data.threadRaces[i])
+      h += `<p class="vars" style="color:var(--bad)">Read another ball after its thread had already overwritten it ${r.data.threadRaces[i].toLocaleString("en-US")} times during the run.</p>`;
+    else if (r) h += `<p class="vars">Read only positions from before this substep.</p>`;
+    return h + `</div>`;
+  }
+
+  window.addEventListener("resize", () => { if (isSim(lv())) paintCanvas(); });
+
   // ------------------------------------------------------------ wiring
   $("btn-run").addEventListener("click", () => {
     if (state.playing) { pause(); return; }
@@ -1773,6 +2842,13 @@ if (typeof module !== "undefined") module.exports = Engine;
   });
   $("stage").addEventListener("click", (e) => {
     if (e.target.id === "btn-next") { setLevel(state.level + 1); return; }
+    if (e.target.id === "phys-canvas") {
+      if (lv().kind !== "physics") return;
+      const i = canvasBall(e);
+      state.selected = i === null || i === state.selected ? null : i;
+      renderStage();
+      return;
+    }
     const chip = e.target.closest("[data-thread]");
     if (!chip) return;
     const id = Number(chip.dataset.thread);
@@ -1806,14 +2882,14 @@ if (typeof module !== "undefined") module.exports = Engine;
       try { saved = JSON.parse(localStorage.getItem(STORE) || "null"); } catch (e) { saved = null; }
     }
     restore(saved);
-    const m = /^#level-([1-4])$/.exec(location.hash);
-    if (m) state.level = Number(m[1]) - 1;
+    const m = /^#level-(\d+)$/.exec(location.hash);
+    if (m && LEVELS[Number(m[1]) - 1]) state.level = Number(m[1]) - 1;
     renderAll();
     window.claude?.hot?.snapshot?.(() => snapshotState());
   }
   window.addEventListener("hashchange", () => {
-    const m = /^#level-([1-4])$/.exec(location.hash);
-    if (m && Number(m[1]) - 1 !== state.level) setLevel(Number(m[1]) - 1);
+    const m = /^#level-(\d+)$/.exec(location.hash);
+    if (m && LEVELS[Number(m[1]) - 1] && Number(m[1]) - 1 !== state.level) setLevel(Number(m[1]) - 1);
   });
   window.claude?.hot?.ready ? window.claude.hot.ready(start) : start(window.claude?.hot?.data ?? {});
 })();
