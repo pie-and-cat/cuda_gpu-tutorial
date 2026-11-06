@@ -1,0 +1,5 @@
+# Local copy of the CUDA toolkit: NVIDIA's licence allows redistributing only the runtime
+# libraries, so the compiler stays out of the repository. Install the CUDA Toolkit instead.
+tools/
+# Build output
+build/

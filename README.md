@@ -7,6 +7,7 @@ Teaching materials for a short session on installing CUDA and seeing where GPUs 
 | `cuda_examples/` | Four examples (vector addition, matrix multiplication, image blur, summation), each with a sequential CPU version and a parallel CUDA version, timing and correctness checks. Build with `make`. |
 | `notebooks/cuda_benchmarks.ipynb` | The same code as a notebook: compiles and benchmarks everything on a free Colab or Kaggle T4 GPU, then draws the charts. |
 | `thread-lab/` | Thread Lab, a block-based browser game that teaches thread indexing, 2-D grids, race conditions, atomics and `__syncthreads()`. |
+| `cuda_balls/` | CUDA Balls, a 3D box of bouncing balls simulated on the GPU (Windows), with a benchmark of one CPU core against the GPU that also runs on Linux and Colab. |
 
 ## Run the benchmarks in Colab
 
@@ -26,3 +27,9 @@ make                      # or: make ARCH=-arch=sm_75 (T4), make ARCH=-arch=sm_8
 
 Open `thread-lab/index.html` in a browser, or enable GitHub Pages for this repository and visit
 `https://pie-and-cat.github.io/cuda_gpu-tutorial/thread-lab/`.
+
+## Run CUDA Balls
+
+On Windows with an NVIDIA GPU: `cuda_balls\build.bat`, then `cuda_balls\build\cuda_balls.exe`.
+On Linux or Colab, only the benchmark runs: `bash cuda_balls/build.sh && ./cuda_balls/build/cuda_balls_bench`.
+See `cuda_balls/README.md`.
