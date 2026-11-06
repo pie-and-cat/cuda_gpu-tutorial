@@ -7,6 +7,8 @@
 
 #include <cuda_runtime.h>
 
+#include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -52,7 +54,7 @@ __host__ __device__ inline float dot(float3 a, float3 b) {
 
 // Force on a body from a contact. `normal` points from the surface towards the body, `overlap` is
 // the penetration depth, and `relVel` is the body's velocity relative to the surface.
-__device__ inline float3 contactForce(float3 normal, float overlap, float3 relVel, float mass) {
+__host__ __device__ inline float3 contactForce(float3 normal, float overlap, float3 relVel, float mass) {
     float normalSpeed = dot(relVel, normal);
     float damping = 2.0f * kContactDamping * sqrtf(kContactStiffness * mass);
     float pushing = kContactStiffness * overlap - damping * normalSpeed;
@@ -70,13 +72,11 @@ __device__ inline float3 contactForce(float3 normal, float overlap, float3 relVe
     return force;
 }
 
-// Positions are (x, y, z, radius) and velocities are (x, y, z, mass).
-__global__ void stepKernel(const float4* __restrict__ pos, const float4* __restrict__ vel,
-                           float4* __restrict__ nextPos, float4* __restrict__ nextVel, int count,
-                           WorldBounds bounds) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= count) return;
-
+// One substep for ball i. Positions are (x, y, z, radius) and velocities are (x, y, z, mass).
+// __host__ __device__: the GPU kernel and the CPU comparison loop run exactly this code.
+__host__ __device__ inline void stepBall(int i, const float4* pos, const float4* vel,
+                                         float4* nextPos, float4* nextVel, int count,
+                                         WorldBounds bounds) {
     float3 p = make_float3(pos[i].x, pos[i].y, pos[i].z);
     float3 v = make_float3(vel[i].x, vel[i].y, vel[i].z);
     float radius = pos[i].w;
@@ -123,6 +123,21 @@ __global__ void stepKernel(const float4* __restrict__ pos, const float4* __restr
     nextVel[i] = make_float4(v.x, v.y, v.z, mass);
 }
 
+// GPU: one thread per ball, all balls at once.
+__global__ void stepKernel(const float4* __restrict__ pos, const float4* __restrict__ vel,
+                           float4* __restrict__ nextPos, float4* __restrict__ nextVel, int count,
+                           WorldBounds bounds) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= count) return;
+    stepBall(i, pos, vel, nextPos, nextVel, count, bounds);
+}
+
+// CPU: one core, one ball after another. Used only by the benchmark.
+void stepCpu(const float4* pos, const float4* vel, float4* nextPos, float4* nextVel, int count,
+             WorldBounds bounds) {
+    for (int i = 0; i < count; ++i) stepBall(i, pos, vel, nextPos, nextVel, count, bounds);
+}
+
 int gCount = 0;
 WorldBounds gBounds = {};
 float4* gPos = nullptr;
@@ -134,8 +149,57 @@ char gDeviceName[256] = "unknown";
 std::vector<float4> gHostPos, gHostVel;
 std::mt19937 gRng(12345);
 
-float randomRange(float lo, float hi) {
-    return std::uniform_real_distribution<float>(lo, hi)(gRng);
+float randomRange(std::mt19937& rng, float lo, float hi) {
+    return std::uniform_real_distribution<float>(lo, hi)(rng);
+}
+float randomRange(float lo, float hi) { return randomRange(gRng, lo, hi); }
+
+// Stack the balls on a loose grid high in the box so they never start overlapping.
+void placeBalls(int count, WorldBounds bounds, std::mt19937& rng, std::vector<float4>& pos,
+                std::vector<float4>& vel) {
+    const float maxRadius = 0.6f;
+    const float spacing = maxRadius * 2.2f;
+    int perSide = (int)(2.0f * (bounds.halfWidth - maxRadius) / spacing);
+    if (perSide < 1) perSide = 1;
+
+    // Drop from 3 units up, or from lower down if that many layers wouldn't otherwise fit.
+    int layers = (count - 1) / (perSide * perSide) + 1;
+    float headroom = bounds.height - 2.0f * maxRadius - (layers - 1) * spacing;
+    float dropHeight = fminf(3.0f, fmaxf(headroom, 0.0f));
+
+    pos.resize(count);
+    vel.resize(count);
+    for (int i = 0; i < count; ++i) {
+        int layer = i / (perSide * perSide);
+        int row = (i / perSide) % perSide;
+        int col = i % perSide;
+        float radius = randomRange(rng, 0.3f, maxRadius);
+        float x = (col - (perSide - 1) * 0.5f) * spacing + randomRange(rng, -0.05f, 0.05f);
+        float z = (row - (perSide - 1) * 0.5f) * spacing + randomRange(rng, -0.05f, 0.05f);
+        float y = maxRadius + dropHeight + layer * spacing;
+        float mass = kDensity * (4.0f / 3.0f) * 3.14159265f * radius * radius * radius;
+        pos[i] = make_float4(x, y, z, radius);
+        vel[i] = make_float4(randomRange(rng, -2.0f, 2.0f), 0.0f, randomRange(rng, -2.0f, 2.0f), mass);
+    }
+}
+
+double secondsNow() {
+    using clock = std::chrono::steady_clock;
+    return std::chrono::duration<double>(clock::now().time_since_epoch()).count();
+}
+
+// Calls run(k) for k substeps and returns seconds per substep. Repeats until about `budget`
+// seconds have been measured, so fast cases are averaged and slow ones are run only once.
+template <class Run>
+double secondsPerStep(Run run, double budget = 0.4) {
+    double t0 = secondsNow();
+    run(1);
+    double one = secondsNow() - t0;
+    int reps = (int)std::min(2000.0, std::max(1.0, budget / std::max(one, 1e-7)));
+    if (reps == 1) return one;
+    t0 = secondsNow();
+    run(reps);
+    return (secondsNow() - t0) / reps;
 }
 
 void readState() {
@@ -184,29 +248,7 @@ void physicsShutdown() {
 }
 
 void physicsReset() {
-    // Stack the balls on a loose grid high in the box so they never start overlapping.
-    const float maxRadius = 0.6f;
-    const float spacing = maxRadius * 2.2f;
-    int perSide = (int)(2.0f * (gBounds.halfWidth - maxRadius) / spacing);
-    if (perSide < 1) perSide = 1;
-
-    // Drop from 3 units up, or from lower down if that many layers wouldn't otherwise fit.
-    int layers = (gCount - 1) / (perSide * perSide) + 1;
-    float headroom = gBounds.height - 2.0f * maxRadius - (layers - 1) * spacing;
-    float dropHeight = fminf(3.0f, fmaxf(headroom, 0.0f));
-
-    for (int i = 0; i < gCount; ++i) {
-        int layer = i / (perSide * perSide);
-        int row = (i / perSide) % perSide;
-        int col = i % perSide;
-        float radius = randomRange(0.3f, maxRadius);
-        float x = (col - (perSide - 1) * 0.5f) * spacing + randomRange(-0.05f, 0.05f);
-        float z = (row - (perSide - 1) * 0.5f) * spacing + randomRange(-0.05f, 0.05f);
-        float y = maxRadius + dropHeight + layer * spacing;
-        float mass = kDensity * (4.0f / 3.0f) * 3.14159265f * radius * radius * radius;
-        gHostPos[i] = make_float4(x, y, z, radius);
-        gHostVel[i] = make_float4(randomRange(-2.0f, 2.0f), 0.0f, randomRange(-2.0f, 2.0f), mass);
-    }
+    placeBalls(gCount, gBounds, gRng, gHostPos, gHostVel);
     writeState();
     gTimeBank = 0.0f;
 }
@@ -252,3 +294,140 @@ float physicsEnergy() {
 }
 
 const char* physicsDeviceName() { return gDeviceName; }
+
+// ------------------------------------------------------------------------------------------------
+// Benchmark: the same substep on one CPU core and on the GPU.
+
+WorldBounds physicsBoundsFor(int ballCount) {
+    const float maxRadius = 0.6f;
+    const float spacing = maxRadius * 2.2f;
+    int perSide = std::max(1, (int)std::ceil(std::cbrt((double)ballCount)));
+    int layers = (ballCount - 1) / (perSide * perSide) + 1;
+    WorldBounds b;
+    b.halfWidth = perSide * spacing * 0.5f + maxRadius + 0.01f;  // exactly perSide balls per row
+    b.height = (layers - 1) * spacing + 2.0f * maxRadius + 3.0f + 1.0f;
+    return b;
+}
+
+int physicsBenchmark(const int* counts, int numCounts, bool cpuOnly) {
+    bool gpu = !cpuOnly;
+    if (gpu) {
+        int devices = 0;
+        cudaError_t err = cudaGetDeviceCount(&devices);
+        if (err != cudaSuccess || devices == 0) {
+            std::fprintf(stderr, "No CUDA GPU available (%s). Add --cpu-only to time the CPU alone.\n",
+                         cudaGetErrorString(err));
+            return 1;
+        }
+        cudaDeviceProp props;
+        if (cudaGetDeviceProperties(&props, 0) == cudaSuccess)
+            std::snprintf(gDeviceName, sizeof(gDeviceName), "%s", props.name);
+    }
+
+    const double realTimeMs = kSubstep * 1000.0;  // a substep must finish this fast to keep up
+    std::printf("One physics substep, timed on one CPU core%s.\n", gpu ? " and on the GPU" : "");
+    if (gpu) std::printf("GPU: %s\n", gDeviceName);
+    std::printf("Real time needs one substep every %.2f ms (%d substeps per simulated second).\n\n",
+                realTimeMs, (int)std::lround(1.0 / kSubstep));
+    std::printf("%8s %14s %13s %13s %9s %12s %12s\n", "balls", "pair checks", "CPU ms/step",
+                "GPU ms/step", "speedup", "real time?", "CPU = GPU?");
+
+    bool allMatch = true;
+    static volatile float sink = 0.0f;  // keeps the compiler from skipping the timed CPU work
+    for (int c = 0; c < numCounts; ++c) {
+        const int n = counts[c];
+        const WorldBounds bounds = physicsBoundsFor(n);
+        std::mt19937 rng(777);
+        std::vector<float4> pos, vel;
+        placeBalls(n, bounds, rng, pos, vel);
+
+        // CPU timing, ping-ponging between two buffers exactly like the GPU version.
+        std::vector<float4> cpuPos[2] = {pos, pos}, cpuVel[2] = {vel, vel};
+        int cur = 0;
+        double cpuMs = 1000.0 * secondsPerStep([&](int k) {
+            for (int s = 0; s < k; ++s) {
+                stepCpu(cpuPos[cur].data(), cpuVel[cur].data(), cpuPos[1 - cur].data(),
+                        cpuVel[1 - cur].data(), n, bounds);
+                cur = 1 - cur;
+            }
+        });
+        sink = cpuPos[cur][0].x;
+
+        double gpuMs = 0.0, diff = 0.0;
+        if (gpu) {
+            // A crowded copy of the start state, so the check exercises ball-ball and floor contacts.
+            std::vector<float4> crowd = pos;
+            float minY = crowd[0].y;
+            for (const float4& q : crowd) minY = fminf(minY, q.y);
+            for (float4& q : crowd) {
+                q.x *= 0.85f;
+                q.z *= 0.85f;
+                q.y = 0.95f * q.w + (q.y - minY) * 0.85f;
+            }
+            std::vector<float4> refPos(n), refVel(n), gpuVel(n);
+            stepCpu(crowd.data(), vel.data(), refPos.data(), refVel.data(), n, bounds);
+
+            const size_t bytes = n * sizeof(float4);
+            float4 *dPos[2], *dVel[2];
+            for (int b = 0; b < 2; ++b) {
+                CUDA_CHECK(cudaMalloc(&dPos[b], bytes));
+                CUDA_CHECK(cudaMalloc(&dVel[b], bytes));
+            }
+            const int blocks = (n + kThreadsPerBlock - 1) / kThreadsPerBlock;
+
+            CUDA_CHECK(cudaMemcpy(dPos[0], crowd.data(), bytes, cudaMemcpyHostToDevice));
+            CUDA_CHECK(cudaMemcpy(dVel[0], vel.data(), bytes, cudaMemcpyHostToDevice));
+            stepKernel<<<blocks, kThreadsPerBlock>>>(dPos[0], dVel[0], dPos[1], dVel[1], n, bounds);
+            CUDA_CHECK(cudaGetLastError());
+            CUDA_CHECK(cudaMemcpy(gpuVel.data(), dVel[1], bytes, cudaMemcpyDeviceToHost));
+            double maxDiff = 0.0, maxVel = 0.0;
+            for (int i = 0; i < n; ++i) {
+                maxDiff = std::max({maxDiff, (double)std::fabs(gpuVel[i].x - refVel[i].x),
+                                    (double)std::fabs(gpuVel[i].y - refVel[i].y),
+                                    (double)std::fabs(gpuVel[i].z - refVel[i].z)});
+                maxVel = std::max({maxVel, (double)std::fabs(refVel[i].x),
+                                   (double)std::fabs(refVel[i].y), (double)std::fabs(refVel[i].z)});
+            }
+            diff = maxDiff / (maxVel + 1.0);  // relative difference in the new velocities
+
+            // GPU timing from the normal start state.
+            CUDA_CHECK(cudaMemcpy(dPos[0], pos.data(), bytes, cudaMemcpyHostToDevice));
+            CUDA_CHECK(cudaMemcpy(dVel[0], vel.data(), bytes, cudaMemcpyHostToDevice));
+            int g = 0;
+            gpuMs = 1000.0 * secondsPerStep([&](int k) {
+                for (int s = 0; s < k; ++s) {
+                    stepKernel<<<blocks, kThreadsPerBlock>>>(dPos[g], dVel[g], dPos[1 - g],
+                                                             dVel[1 - g], n, bounds);
+                    g = 1 - g;
+                }
+                CUDA_CHECK(cudaDeviceSynchronize());
+            });
+            CUDA_CHECK(cudaGetLastError());
+            for (int b = 0; b < 2; ++b) {
+                CUDA_CHECK(cudaFree(dPos[b]));
+                CUDA_CHECK(cudaFree(dVel[b]));
+            }
+        }
+
+        const bool cpuKeeps = cpuMs <= realTimeMs, gpuKeeps = gpu && gpuMs <= realTimeMs;
+        const char* keeps = cpuKeeps && gpuKeeps ? "both"
+                            : gpuKeeps           ? "GPU only"
+                            : cpuKeeps           ? "CPU only"
+                                                 : "neither";
+        char gpuCol[32] = "-", speedCol[32] = "-", matchCol[32] = "-";
+        if (gpu) {
+            std::snprintf(gpuCol, sizeof gpuCol, "%.3f", gpuMs);
+            std::snprintf(speedCol, sizeof speedCol, "%.1fx", cpuMs / gpuMs);
+            const bool match = diff < 1e-3;
+            allMatch = allMatch && match;
+            std::snprintf(matchCol, sizeof matchCol, "%s %.0e", match ? "yes" : "NO", diff);
+        }
+        std::printf("%8d %14lld %13.3f %13s %9s %12s %12s\n", n, (long long)n * (n - 1), cpuMs,
+                    gpuCol, speedCol, gpu ? keeps : (cpuKeeps ? "yes" : "no"), matchCol);
+        std::fflush(stdout);
+    }
+    if (gpu)
+        std::printf("\n%s\n", allMatch ? "PASS: the CPU and GPU compute the same physics."
+                                       : "FAIL: the CPU and GPU results differ.");
+    return allMatch ? 0 : 1;
+}

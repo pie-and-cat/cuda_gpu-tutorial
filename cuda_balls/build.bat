@@ -23,8 +23,12 @@ call "%VSDIR%\VC\Auxiliary\Build\vcvars64.bat" >nul
 
 :compile
 if not exist build mkdir build
-rem Native code for RTX 40 series GPUs (sm_89). A driver older than this toolkit can't JIT-compile its PTX.
-nvcc -O2 -std=c++17 -arch=sm_89 -Xcompiler "/EHsc,/W3,/nologo" -I src src\main.cpp src\physics.cu -o build\cuda_balls.exe
+rem Ready-made machine code for each GPU generation CUDA 13 supports, so no driver has to
+rem JIT-compile anything (a driver older than the toolkit can't JIT its PTX):
+rem   sm_75 RTX 20 / GTX 16 / T4, sm_80 A100, sm_86 RTX 30, sm_89 RTX 40, sm_90 H100, sm_120 RTX 50.
+rem The last entry also embeds PTX, so GPUs newer than these can run it with a new enough driver.
+set "ARCHS=-gencode arch=compute_75,code=sm_75 -gencode arch=compute_80,code=sm_80 -gencode arch=compute_86,code=sm_86 -gencode arch=compute_89,code=sm_89 -gencode arch=compute_90,code=sm_90 -gencode arch=compute_120,code=sm_120 -gencode arch=compute_120,code=compute_120"
+nvcc -O2 -std=c++17 %ARCHS% -Xcompiler "/EHsc,/W3,/nologo" -I src src\main.cpp src\physics.cu -o build\cuda_balls.exe
 if errorlevel 1 (
     echo Build failed.
     exit /b 1

@@ -31,3 +31,11 @@ float physicsEnergy();
 
 // Name of the GPU that the simulation is running on.
 const char* physicsDeviceName();
+
+// A box just big enough to start `ballCount` balls without overlapping (used by the benchmark).
+WorldBounds physicsBoundsFor(int ballCount);
+
+// Times one substep on one CPU core and on the GPU for each ball count, checks that both give the
+// same result, and prints a table. With cpuOnly, the GPU is skipped (no GPU needed).
+// Returns 0 when the CPU and GPU agree.
+int physicsBenchmark(const int* counts, int numCounts, bool cpuOnly);

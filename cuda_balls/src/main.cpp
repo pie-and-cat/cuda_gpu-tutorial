@@ -311,18 +311,29 @@ int runSelfTest(int ballCount) {
 
 int main(int argc, char** argv) {
     int ballCount = kDefaultBalls;
-    bool selfTest = false;
+    bool selfTest = false, bench = false, cpuOnly = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--selftest") == 0) {
             selfTest = true;
+        } else if (std::strcmp(argv[i], "--bench") == 0) {
+            bench = true;
+        } else if (std::strcmp(argv[i], "--cpu-only") == 0) {
+            cpuOnly = true;
         } else {
             int parsed = std::atoi(argv[i]);
             if (parsed <= 0 || parsed > kMaxBalls) {
-                std::fprintf(stderr, "Usage: cuda_balls [ball count, 1-%d] [--selftest]\n", kMaxBalls);
+                std::fprintf(stderr,
+                             "Usage: cuda_balls [ball count, 1-%d] [--selftest] [--bench [--cpu-only]]\n",
+                             kMaxBalls);
                 return 1;
             }
             ballCount = parsed;
         }
+    }
+    if (bench) {
+        // The same substep on one CPU core and on the GPU, for growing ball counts.
+        const int counts[] = {100, 500, 1000, 2000, 5000, 10000, 20000};
+        return physicsBenchmark(counts, (int)(sizeof(counts) / sizeof(counts[0])), cpuOnly);
     }
     if (selfTest) return runSelfTest(ballCount);
 
