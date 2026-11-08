@@ -664,13 +664,21 @@ const Engine = (() => {
       block: { x: 4, y: 4 },
       w: IMG_W,
       h: IMG_H,
-      kernelHeader: ["__global__ void blur(const int* in, int* out, int w, int h) {"],
+      kernelHeader: [
+        "// blur_pixel: the rounded average of",
+        "// the 3 × 3 pixels around (x, y)",
+        "__device__ int blur_pixel(",
+        "    const int* in, int w, int h,",
+        "    int x, int y);",
+        "__global__ void blur(const int* in,",
+        "    int* out, int w, int h) {",
+      ],
       launch: "blur<<<dim3(4, 3), dim3(4, 4)>>>(in, out, 14, 10);   // 12 blocks × 16 threads = 192 threads",
-      cpuCode: "for (int y = 0; y < 10; ++y) for (int x = 0; x < 14; ++x) out[y][x] = blur(in, x, y);",
+      cpuCode: "for (int y = 0; y < 10; ++y) for (int x = 0; x < 14; ++x) out[y][x] = blur_pixel(in, w, h, x, y);",
       mission:
         "Blur a 14 × 10 image with one thread per pixel. The grid is 4 × 3 blocks of 4 × 4 threads, which is 16 × 12 threads, so some threads fall off the right and bottom edges.",
       hint: "x comes from the .x variables and y from the .y variables. Threads with x ≥ 14 or y ≥ 10 have no pixel.",
-      dataNote: "Each output pixel is the rounded average of the 3 × 3 input pixels around it.",
+      dataNote: "blur_pixel returns the rounded average of the 3 × 3 input pixels around (x, y), the same function as in the tutorial's image_blur.cu.",
       palette: ["idx_x", "idx_y", "guard2", "blur", "copy", "blurT"],
       start: [{ type: "idx_x" }, { type: "idx_y" }],
       blocks: {
@@ -685,7 +693,7 @@ const Engine = (() => {
         },
         blur: {
           cat: "memory",
-          parts: ["out[y][x] = average of the 3 × 3 pixels around in[y][x];"],
+          parts: ["out[y][x] = blur_pixel(in, w, h, x, y);"],
           exec(ctx) {
             const x = ctx.get("x"), y = ctx.get("y");
             const v = blurAt((r, c) => ctx.read2("in", r, c), x, y);
@@ -702,7 +710,7 @@ const Engine = (() => {
         },
         blurT: {
           cat: "memory",
-          parts: ["out[x][y] = average of the 3 × 3 pixels around in[x][y];"],
+          parts: ["out[x][y] = blur_pixel(in, w, h, y, x);"],
           exec(ctx) {
             const x = ctx.get("x"), y = ctx.get("y");
             ctx.read2("in", x, y); // the swapped coordinates fault here for x >= 10
@@ -1050,7 +1058,7 @@ const Engine = (() => {
       const cell = (i) => (level.dims === 2 ? `out[${Math.floor(i / level.w)}][${i % level.w}]` : `c[${i}]`);
       if (missing.length === A.len)
         return fail(`Nothing was written to ${outName}`,
-          level.id === "vector-add" ? "Add the block that computes c[i]." : "Add the block that blurs a pixel into out[y][x].");
+          level.id === "vector-add" ? "Add the block that computes c[i]." : "Add out[y][x] = blur_pixel(in, w, h, x, y);");
       if (dup.length || missing.length) {
         let msg = "";
         if (dup.length) msg += `${cell(dup[0])} was written by ${A.writers.get(dup[0]).size} different threads. `;
@@ -1077,7 +1085,7 @@ const Engine = (() => {
         const i = wrong[0];
         const why = level.id === "vector-add" ? `a[${i}] + b[${i}] = ${level.expected[i]}` : `the 3 × 3 average, ${level.expected[i]}`;
         return fail(`${wrong.length} output values are wrong`,
-          `${cell(i)} is ${A.committed[i]} but should be ${why}. ${level.id === "vector-add" ? "Use the + block." : "Use the block that averages the 3 × 3 neighbourhood."}`);
+          `${cell(i)} is ${A.committed[i]} but should be ${why}. ${level.id === "vector-add" ? "Use the + block." : "Use the blur_pixel block."}`);
       }
       const returned = res.threads.filter((t) => t.returned).length;
       return pass(
