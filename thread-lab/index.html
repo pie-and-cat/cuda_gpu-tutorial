@@ -328,6 +328,7 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 }
 .phys-canvas { display: block; width: 100%; aspect-ratio: 13 / 9.2; border-radius: 10px; border: 1px solid var(--line); cursor: pointer; background: #e4e9ee; }
 .chip.ball { background: color-mix(in srgb, var(--bc) 85%, white); color: white; }
+.ival.hit { color: var(--good); font-weight: 600; }
 .mem-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, 1fr); gap: 10px 14px; margin-top: 12px; }
 @media (max-width: 560px) { .mem-grid { grid-template-columns: minmax(0, 1fr); } }
 .mem-box {
@@ -2012,9 +2013,191 @@ const Physics = (() => {
       "The chart below runs your kernel on every frame: the total falls as collisions and air drag turn motion into heat. CUDA Balls checks the same thing in --selftest.",
   };
 
+  // ---------------------------------------------------------------- level 6: pie the professor
+  // A parameter sweep: each thread flies one whole throw inside the kernel, then the threads that hit
+  // the professor's face agree on the gentlest one. The pies never touch each other, so no swaps and no
+  // copies are needed until the answer. The floor, the jacket and the walls only stop the drawing of a
+  // pie; the kernel's result depends on face hits alone.
+  const PIE = Object.freeze({
+    throws: 20, steps: 1440, every: 16, angle: (35 * Math.PI) / 180, pieR: 0.16,
+    hand: { x: -4.8, y: 1.6 },
+    head: { x: 4.55, y: 3.55, r: 0.38 },
+    jacket: { x0: 4.15, x1: 4.95, top: 3.12 },
+  });
+  const pieSpeed = (i) => 9.25 + 0.25 * i;
+
+  const sweepBlocks = {
+    gravity: { cat: "physics", parts: ["v.y -= g * dt;"] },
+    fly: { cat: "physics", parts: ["p += v * dt;"] },
+    hitCheck: { cat: "control", parts: ["if (hitsFace(p)) {\n  hit = true;  break;\n}"] },
+    recordRace: { cat: "memory", parts: ["if (hit && i < gentlest)\n  gentlest = i;"] },
+    recordAtomic: { cat: "sync", parts: ["if (hit)\n  atomicMin(&gentlest, i);"] },
+    loopEnd: { cat: "loop", fixed: true, parts: ["}   // end of the flight"] },
+  };
+
+  function runSweep(level, program) {
+    const types = program.map((s) => s.type);
+    const end = types.indexOf("loopEnd");
+    const loopOps = types.slice(0, end), afterOps = types.slice(end + 1);
+    const T = PIE.throws, nThreads = PHYS.blocks * PHYS.threads;
+    const throws = [];
+    for (let i = 0; i < T; i++) {
+      const sp = pieSpeed(i);
+      throws.push({
+        i, speed: sp, p: { ...PIE.hand }, v: { x: sp * Math.cos(PIE.angle), y: sp * Math.sin(PIE.angle) },
+        inLoop: true, hit: false, hitStep: null, shown: { ...PIE.hand }, stop: null,
+      });
+    }
+    const snapShown = () => {
+      const a = new Float32Array(2 * T);
+      throws.forEach((t, k) => { a[2 * k] = t.shown.x; a[2 * k + 1] = t.shown.y; });
+      return a;
+    };
+    const exec = (op, t, step) => {
+      if (op === "gravity") t.v.y -= PHYS.g * PHYS.dt;
+      else if (op === "fly") { t.p.x += t.v.x * PHYS.dt; t.p.y += t.v.y * PHYS.dt; }
+      else if (op === "hitCheck") {
+        if (t.inLoop && Math.hypot(t.p.x - PIE.head.x, t.p.y - PIE.head.y) < PIE.head.r + PIE.pieR / 2) {
+          t.hit = true;
+          t.hitStep = step;
+          t.inLoop = false; // break
+        }
+      }
+    };
+    // where the drawing of a pie stops: the face (a hit), or the floor, the jacket, a wall or the ceiling
+    const settle = (t, step) => {
+      if (t.stop) return;
+      const { x, y } = t.p, r = PIE.pieR, J = PIE.jacket;
+      let kind = null;
+      if (t.hit) kind = "face";
+      else if (x > J.x0 - r && x < J.x1 + r && y < J.top) kind = "jacket";
+      else if (y < r) kind = "floor";
+      else if (x > PHYS.halfW - r) kind = "wall";
+      else if (y > PHYS.H - r) kind = "ceiling";
+      t.shown = { x, y };
+      if (kind) t.stop = { kind, step };
+    };
+    const frames = [snapShown()];
+    for (let step = 0; step < PIE.steps; step++) {
+      for (const op of loopOps) for (const t of throws) if (t.inLoop) exec(op, t, step);
+      for (const t of throws) settle(t, step);
+      if ((step + 1) % PIE.every === 0) frames.push(snapShown());
+    }
+    // after the loop: statements below the } run once; every thread reaches them at the same moment
+    let gentlest = T;
+    const racers = [];
+    for (const op of afterOps) {
+      if (op === "recordRace") {
+        const seen = gentlest, writers = throws.filter((t) => t.hit && t.i < seen);
+        for (const t of writers) gentlest = t.i; // all read the same old value; the last write lands
+        racers.push(...writers.map((t) => t.i));
+      } else if (op === "recordAtomic") {
+        for (const t of throws) if (t.hit) gentlest = Math.min(gentlest, t.i); // one at a time
+      } else for (const t of throws) exec(op, t, PIE.steps);
+    }
+    const hitters = throws.filter((t) => t.hit).map((t) => t.i);
+    const res = {
+      kind: "sweep", level, program, frames, loopOps, afterOps, gentlest, hitters, racers,
+      truth: hitters.length ? hitters[0] : null,
+      throws: throws.map((t) => ({ i: t.i, speed: t.speed, hit: t.hit, hitStep: t.hitStep, stop: t.stop })),
+      firstThreads: Array.from({ length: nThreads }, (_, id) => ({ id, bx: Math.floor(id / PHYS.threads), tx: id % PHYS.threads, i: id, returned: id >= T, fault: null })),
+    };
+    res.verdict = judgeSweep(res);
+    return res;
+  }
+
+  function judgeSweep(res) {
+    const { loopOps: L, afterOps: A, hitters } = res;
+    const where = (op) => (L.includes(op) ? "loop" : A.includes(op) ? "after" : null);
+    const T = PIE.throws;
+    if (!L.length && !A.length) return fail("The kernel is empty", "Drag blocks into it. Blocks above the } run once per step of the flight; blocks below it run once, after the flight.");
+    for (const op of new Set([...L, ...A]))
+      if ([...L, ...A].filter((o) => o === op).length > 1)
+        return fail(`${sweepBlocks[op].parts.join("").replace(/\s+/g, " ")} is in the kernel twice`, "Each step of a throw happens once. Remove the extra copy.");
+    if (where("fly") !== "loop")
+      return fail("The pies never leave the launcher", where("fly")
+        ? "p += v * dt is below the }, so it runs once, after the flight. Move it inside the loop."
+        : "Nothing moves the pies. Add p += v * dt; inside the loop.");
+    if (where("gravity") !== "loop")
+      return fail("The pies fly in straight lines", where("gravity")
+        ? "v.y -= g * dt is below the }, so gravity acts once, after the flight is over. Move it inside the loop."
+        : "Nothing pulls the pies down, so every throw sails over the professor. Add v.y -= g * dt; inside the loop.");
+    if (where("hitCheck") === "after")
+      return fail("The hit check is outside the loop",
+        "Below the }, break has no loop to leave, and the check would only look at where each pie ended up. Move it inside the loop.");
+    if (!where("hitCheck"))
+      return fail("Pies fly straight through the professor",
+        "Nothing checks for a hit, so no thread ever sets hit. Add the hitsFace(p) check inside the loop.");
+    if (!where("recordRace") && !where("recordAtomic"))
+      return fail("Nobody wrote down the answer",
+        `${hitters.length} throws hit the face, but the kernel never records one. Below the }, add the block that keeps the gentlest hit.`);
+    if (where("recordRace") === "loop" || where("recordAtomic") === "loop")
+      return fail("gentlest is still 20: nothing was recorded",
+        "The record is inside the loop, but a thread that hits leaves the loop at break, so it never reaches the record. Move it below the }.");
+    if (!hitters.length) return fail("No pie hit the face", "Check that gravity and the move both run inside the loop.");
+    const truth = res.truth;
+    const range = hitters.length > 2 ? `${hitters[0]}–${hitters.at(-1)}` : hitters.join(" and ");
+    if (where("recordRace") && where("recordAtomic"))
+      return fail("Two records", "Keep only the atomicMin block: the plain compare-and-write is the race you are replacing.");
+    if (where("recordRace") && res.gentlest !== truth)
+      return fail(`gentlest = ${res.gentlest}, but throw ${truth} is gentler: a race`,
+        `Throws ${range} all hit. Each of those threads compared its i with gentlest = ${T} at the same moment, so all ${res.racers.length} wrote, and the last write, throw ${res.gentlest}, survived. ` +
+        "atomicMin compares and writes in one indivisible step: use if (hit) atomicMin(&gentlest, i);");
+    if (where("recordRace"))
+      return fail("Right answer, by luck", "Only one thread wrote this time. Use atomicMin so the answer stays right however many throws hit.");
+    const before = res.throws[truth - 1];
+    const slower = before ? ` Throw ${truth - 1}, at ${before.speed.toFixed(2)} m/s, lands on the ${before.stop ? before.stop.kind : "floor"} instead.` : "";
+    return pass(`Splat! Throw ${truth} is the gentlest that lands`,
+      `It leaves the launcher at ${res.throws[truth].speed.toFixed(2)} m/s.${slower} ` +
+      `Every thread flew a whole 1.5-second throw, ${PIE.steps.toLocaleString("en-US")} steps, inside a single launch, with no copies until the answer. ` +
+      `Trying many independent inputs at once is called a parameter sweep, one of the easiest ways to put a GPU to work. One CPU core would fly the throws one after another: ${T} × ${PIE.steps.toLocaleString("en-US")} = ${(T * PIE.steps).toLocaleString("en-US")} steps.`);
+  }
+
+  const pieLevel = {
+    id: "balls-pie",
+    kind: "sweep",
+    track: "physics",
+    number: 6,
+    title: "Pie the professor",
+    concept: "A parameter sweep",
+    dims: 1,
+    grid: { x: PHYS.blocks, y: 1 },
+    block: { x: PHYS.threads, y: 1 },
+    n: PIE.throws,
+    kernelHeader: [
+      "__device__ int gentlest = 20;   // no hit yet",
+      "__global__ void throwPies(",
+      "    const float* speed, int n) {",
+      "  int i = blockIdx.x * blockDim.x",
+      "        + threadIdx.x;",
+      "  if (i >= n) return;",
+      "  float2 p = hand;",
+      "  float2 v = throwAt(speed[i]);",
+      "  bool hit = false;",
+      "  for (int s = 0; s < 1440; ++s) {",
+    ],
+    launch: "throwPies<<<3, 8>>>(speed, 20);   // 20 throws, one launch",
+    mission:
+      "Finale: the department's charity fundraiser, where a volunteer professor takes a pie to the face. Twenty pies are ready, thrown from soft to fast, and each thread flies one whole throw. Find the gentlest throw that still lands on the face. The starting kernel has no gravity, and its record of the answer is not safe.",
+    hint:
+      "Inside the loop: gravity, then the move, then the hit check. Below the }: record the gentlest hit. Several threads hit at once, so the compare and the write must happen in one step.",
+    dataNote:
+      "Throw i leaves the launcher at 9.25 + 0.25 × i m/s, always at 35°. The flight is simulated for 1.5 seconds in steps of 1/960 s. Blocks above the } run every step; blocks below it run once.",
+    model: [
+      "Each thread flies one throw from start to finish, so one kernel launch covers the whole 1.5 seconds.",
+      "The throws never touch each other, so threads share nothing until they record the answer.",
+      "Every thread reaches the line below the } at the same moment, as in level 5.",
+      "A pie that misses the face stops on the jacket, the floor or a wall in the drawing; only face hits count.",
+    ],
+    catOrder: ["physics", "control", "memory", "sync"],
+    palette: ["gravity", "fly", "hitCheck", "recordRace", "recordAtomic"],
+    start: ["fly", "hitCheck", "loopEnd", "recordRace"].map((type) => ({ type })),
+    blocks: sweepBlocks,
+  };
+
   // The "Build CUDA Balls" track comes first; the original four levels become the classic track.
   for (const l of E.LEVELS) l.track = l.track || "classic";
-  E.LEVELS.unshift(moveLevel, gravityLevel, collideLevel, hostLevel, energyLevel);
+  E.LEVELS.unshift(moveLevel, gravityLevel, collideLevel, hostLevel, energyLevel, pieLevel);
 
   // Total energy per frame as the student's kernel computes it, next to the true total.
   function energySeries(level, program, every = 4) {
@@ -2030,10 +2213,12 @@ const Physics = (() => {
   }
 
   function run(level, program) {
-    return level.kind === "host" ? runHost(level, program) : runKernelLevel(level, program);
+    if (level.kind === "host") return runHost(level, program);
+    if (level.kind === "sweep") return runSweep(level, program);
+    return runKernelLevel(level, program);
   }
 
-  return { PHYS, RADIUS, MASS, run, simulate, refState, garbageState, stepCounts, energySeries, ENERGY_TOTAL };
+  return { PHYS, PIE, RADIUS, MASS, run, simulate, refState, garbageState, stepCounts, energySeries, ENERGY_TOTAL };
 })();
 
 if (typeof module !== "undefined") module.exports = Physics;
@@ -2044,7 +2229,7 @@ if (typeof module !== "undefined") module.exports = Physics;
 (() => {
   const { LEVELS, runGPU, runCPU, blockText, threadLabel, makeThreads } = Engine;
   const PH = typeof Physics !== "undefined" ? Physics : null; // levels 5 and 6
-  const isSim = (L) => L.kind === "physics" || L.kind === "host";
+  const isSim = (L) => L.kind === "physics" || L.kind === "host" || L.kind === "sweep";
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
   const range = (n) => Array.from({ length: n }, (_, i) => i);
@@ -2097,7 +2282,7 @@ if (typeof module !== "undefined") module.exports = Physics;
       if (!LEVELS[i] || !Array.isArray(p)) return;
       let list = p.filter((s) => s && LEVELS[i].blocks[s.type]).map((s) => newStmt(s.type, s.fields));
       // host code must keep exactly one end-of-loop marker
-      if (LEVELS[i].kind === "host" && list.filter((s) => s.type === "loopEnd").length !== 1)
+      if (LEVELS[i].blocks.loopEnd && list.filter((s) => s.type === "loopEnd").length !== 1)
         list = LEVELS[i].start.map((s) => newStmt(s.type, s.fields));
       state.programs[i] = list;
     });
@@ -2186,7 +2371,7 @@ if (typeof module !== "undefined") module.exports = Physics;
     const highlight = (line) => {
       const cut = line.indexOf("//");
       const code = cut < 0 ? line : line.slice(0, cut);
-      return esc(code).replace(/\b(__global__|__device__|__shared__|__constant__|void|int|const|float2|float|for)\b/g, '<span class="kw">$1</span>') +
+      return esc(code).replace(/\b(__global__|__device__|__shared__|__constant__|void|int|const|float2|float|bool|for)\b/g, '<span class="kw">$1</span>') +
         (cut < 0 ? "" : `<span class="cm">${esc(line.slice(cut))}</span>`);
     };
     const header = L.kernelHeader.map(highlight).join("\n");
@@ -2329,7 +2514,7 @@ if (typeof module !== "undefined") module.exports = Physics;
   $("kernel").addEventListener("click", (e) => {
     if (state.playing) return;
     if (e.target.id === "btn-clear") {
-      state.programs[state.level] = lv().kind === "host" ? [newStmt("loopEnd")] : [];
+      state.programs[state.level] = lv().start.filter((st) => lv().blocks[st.type].fixed).map((st) => newStmt(st.type));
       programChanged();
       return;
     }
@@ -2417,7 +2602,7 @@ if (typeof module !== "undefined") module.exports = Physics;
     if (!r || !state.playing) return;
     if (atEnd()) { finish(); return; }
     state.timer = setTimeout(() => {
-      const skip = isSim(lv()) && state.speed === "fast" ? 2 : 1;
+      const skip = isSim(lv()) && lv().kind !== "sweep" && state.speed === "fast" ? 2 : 1;
       r.frame = Math.min(r.frame + skip, r.data.frames.length - 1);
       if (atEnd()) finish();
       else { renderStage(); tick(); }
@@ -2425,6 +2610,7 @@ if (typeof module !== "undefined") module.exports = Physics;
   }
   function delayFor(r) {
     const base = SPEED[state.speed];
+    if (r.data.kind === "sweep") return { slow: 1000 / 15, normal: 1000 / 30, fast: 1000 / 60 }[state.speed]; // half speed: watch the arcs
     if (r.data.kind === "physics" || r.data.kind === "host") return state.speed === "slow" ? 1000 / 30 : 1000 / 60;
     if (r.kind === "cpu") return Math.max(25, Math.min(base * 0.6, (base * 10) / r.data.frames.length));
     const next = r.data.frames[r.frame + 1];
@@ -2497,7 +2683,7 @@ if (typeof module !== "undefined") module.exports = Physics;
     cpu.textContent = state.playing && r && r.kind === "cpu" ? "Running CPU loop…" : "Run CPU loop";
     cpu.disabled = L.kind === "host";
     cpu.title = L.kind === "host" ? "This level is CPU code already" : "";
-    $("btn-step").title = isSim(L) ? "Advance one frame (16 substeps)" : "Run one block of the kernel";
+    $("btn-step").title = isSim(L) ? "Advance one frame (1/60 of a second)" : "Run one block of the kernel";
     $("btn-reset").disabled = !r;
   }
 
@@ -2740,6 +2926,14 @@ if (typeof module !== "undefined") module.exports = Physics;
     const el = $("verdict");
     const r = state.run;
     if (!r || !atEnd() || state.playing) { el.className = "verdict"; el.innerHTML = ""; return; }
+    if (r.kind === "cpunote" && lv().kind === "sweep") {
+      const P = PH.PIE, total = (P.throws * P.steps).toLocaleString("en-US");
+      el.className = "verdict show";
+      el.innerHTML = `<h3>One CPU core: ${total} steps</h3>` +
+        `<p>A CPU loop flies the throws one after another: ${P.throws} throws × ${P.steps.toLocaleString("en-US")} steps = ${total}, against ${P.steps.toLocaleString("en-US")} on the GPU, where every throw has its own thread. ` +
+        `Twenty throws is nothing for a real CPU. Sweeps pay off with thousands of inputs: Monte Carlo simulations, parameter searches, or every launch angle and speed at once.</p>`;
+      return;
+    }
     if (r.kind === "cpunote") {
       const ref = PH.stepCounts(prog());
       el.className = "verdict show";
@@ -2759,7 +2953,7 @@ if (typeof module !== "undefined") module.exports = Physics;
     const next = LEVELS[state.level + 1] && trackOf(state.level + 1) === L.track;
     const allSolved = track.every((i) => state.done[i]);
     const closing = L.track === "physics"
-      ? `You built the heart of <code>cuda_balls</code>: the kernel, the loop that drives it, and the energy check. The program in the repository runs the same engine in 3-D with thousands of balls; <code>cuda_balls --bench</code> shows where the GPU overtakes one CPU core.</p>` +
+      ? `You built the heart of <code>cuda_balls</code>: the kernel, the loop that drives it and the energy check, then ran a parameter sweep. Splat. The program in the repository runs the same engine in 3-D with thousands of balls; <code>cuda_balls --bench</code> shows where the GPU overtakes one CPU core.</p>` +
         `<button class="btn" type="button" id="btn-classic">Try the classic examples</button>`
       : `These are the four examples in the tutorial; the benchmark notebook times them on a real GPU.</p>`;
     el.className = `verdict show ${v.ok ? "ok" : "bad"}`;
@@ -2840,6 +3034,7 @@ if (typeof module !== "undefined") module.exports = Physics;
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     const s = w / (VIEW.x1 - VIEW.x0);
     const X = (x) => (x - VIEW.x0) * s, Y = (y) => (VIEW.y1 - y) * s;
+    if (L.kind === "sweep") { paintPies(g, w, h, s, X, Y); return; }
     const { halfW, H } = PH.PHYS;
     g.fillStyle = "#e4e9ee";
     g.fillRect(0, 0, w, h);
@@ -2949,7 +3144,7 @@ if (typeof module !== "undefined") module.exports = Physics;
     const key = [state.level, runSerial, state.selected, state.selectedBall, state.run ? state.run.kind : "idle", r && atEnd() && !state.playing ? "end" : ""].join("|");
     if (key !== vizKey) {
       vizKey = key;
-      $("viz").innerHTML = L.kind === "physics" ? vizKernel(L) : vizHostLoop();
+      $("viz").innerHTML = L.kind === "physics" ? vizKernel(L) : L.kind === "sweep" ? vizPies(L) : vizHostLoop();
     }
     if (L.kind === "host") $("host-live").innerHTML = hostLive();
     paintCanvas();
@@ -3028,6 +3223,7 @@ if (typeof module !== "undefined") module.exports = Physics;
 
   function simTicker(L) {
     const r = simRun();
+    if (L.kind === "sweep") return pieTicker(r);
     const P = PH.PHYS;
     let now, counters;
     if (L.kind === "physics") {
@@ -3054,6 +3250,7 @@ if (typeof module !== "undefined") module.exports = Physics;
   }
 
   function simInspector(L) {
+    if (L.kind === "sweep") return pieInspector(L);
     if (L.kind === "host")
       return "Step advances one frame. Watch which substep each buffer holds, and where pos and nextPos point.";
     if (state.selected === null && state.selectedBall !== null && state.selectedBall !== undefined)
@@ -3080,6 +3277,231 @@ if (typeof module !== "undefined") module.exports = Physics;
     if (r && r.data.threadRaces[i])
       h += `<p class="vars" style="color:var(--bad)">Read another ball after its thread had already overwritten it ${r.data.threadRaces[i].toLocaleString("en-US")} times during the run.</p>`;
     else if (r) h += `<p class="vars">Read only positions from before this substep.</p>`;
+    return h + `</div>`;
+  }
+
+  // ------------------------------------------------------------ level 6: pie the professor
+  // An original cartoon: a volunteer professor in a tweed jacket and mortarboard, a pie launcher on a
+  // tripod, and one arc per thread. Pies that reach the face stay there; the others squash where they land.
+  const PIE_CREAM = "#fff7e6", PIE_CRUST = "#c98a45";
+  const pieFrame = () => {
+    const r = simRun();
+    return r ? r.frame : 0;
+  };
+  function piePositions() {
+    const r = simRun();
+    if (r) return r.data.frames[r.frame];
+    const P = PH.PIE, a = new Float32Array(2 * P.throws);
+    for (let k = 0; k < P.throws; k++) { a[2 * k] = P.hand.x; a[2 * k + 1] = P.hand.y; }
+    return a;
+  }
+  function paintPies(g, w, h, s, X, Y) {
+    const P = PH.PIE, { halfW, H } = PH.PHYS, r = simRun();
+    const step = pieFrame() * P.every;
+    const face = r ? r.data.throws.filter((t) => t.hit && t.hitStep <= step) : [];
+    const done = r && atEnd() && !state.playing;
+    // the room: a wall, a floor and a banner
+    g.fillStyle = "#e4e9ee"; g.fillRect(0, 0, w, h);
+    g.fillStyle = "#fbf8f2"; g.fillRect(X(-halfW), Y(H), 2 * halfW * s, H * s);
+    g.fillStyle = "#e9dfcf"; g.fillRect(X(-halfW), Y(0.55), 2 * halfW * s, 0.55 * s);
+    g.fillStyle = "#25303b";
+    g.font = `800 ${Math.round(s * 0.42)}px "Big Shoulders Display", "Arial Narrow", sans-serif`;
+    g.textAlign = "center"; g.textBaseline = "middle";
+    g.fillText("CHARITY PIE DAY", X(0), Y(7.3));
+    g.font = `500 ${Math.round(s * 0.2)}px "IBM Plex Sans", system-ui, sans-serif`;
+    g.fillStyle = "#586574";
+    g.fillText("one thread per throw · find the gentlest that lands", X(0), Y(6.85));
+    g.strokeStyle = "#25303b"; g.lineWidth = 3;
+    g.strokeRect(X(-halfW), Y(H), 2 * halfW * s, H * s);
+
+    // the launcher: a tripod with a spoon arm at the hand position
+    g.strokeStyle = "#4b5563"; g.lineWidth = Math.max(2, s * 0.07); g.lineCap = "round";
+    const hx = P.hand.x, hy = P.hand.y;
+    for (const dx of [-0.45, 0.45]) { g.beginPath(); g.moveTo(X(hx - 0.2), Y(hy - 0.35)); g.lineTo(X(hx - 0.2 + dx), Y(0.02)); g.stroke(); }
+    g.beginPath(); g.moveTo(X(hx - 0.2), Y(hy - 0.35)); g.lineTo(X(hx + 0.05), Y(hy - 0.05)); g.stroke();
+    g.fillStyle = "#4b5563"; g.beginPath(); g.arc(X(hx - 0.2), Y(hy - 0.35), s * 0.09, 0, Math.PI * 2); g.fill();
+
+    // the professor: legs, tweed jacket, arms, bow tie, head, glasses, mortarboard
+    const J = P.jacket, hd = P.head;
+    g.fillStyle = "#3b4350";
+    g.fillRect(X(J.x0 + 0.1), Y(1.2), 0.25 * s, 1.2 * s);
+    g.fillRect(X(J.x1 - 0.35), Y(1.2), 0.25 * s, 1.2 * s);
+    g.fillStyle = "#8a5a3b";
+    roundRect(g, X(J.x0), Y(J.top), (J.x1 - J.x0) * s, (J.top - 1.15) * s, s * 0.12); g.fill();
+    g.strokeStyle = "#6f4630"; g.lineWidth = 1;
+    for (let k = 1; k < 4; k++) { g.beginPath(); g.moveTo(X(J.x0 + 0.05), Y(J.top - k * 0.45)); g.lineTo(X(J.x1 - 0.05), Y(J.top - k * 0.45 - 0.08)); g.stroke(); }
+    g.strokeStyle = "#8a5a3b"; g.lineWidth = s * 0.16; g.lineCap = "round";
+    g.beginPath(); g.moveTo(X(J.x0 + 0.05), Y(J.top - 0.25)); g.lineTo(X(J.x0 - 0.35), Y(J.top - 1.05)); g.stroke();
+    g.beginPath(); g.moveTo(X(J.x1 - 0.05), Y(J.top - 0.25)); g.lineTo(X(J.x1 + 0.3), Y(J.top - 1.1)); g.stroke();
+    g.fillStyle = "#f2c9a0";
+    g.beginPath(); g.arc(X(J.x0 - 0.38), Y(J.top - 1.1), s * 0.09, 0, Math.PI * 2); g.fill();
+    g.beginPath(); g.arc(X(J.x1 + 0.32), Y(J.top - 1.15), s * 0.09, 0, Math.PI * 2); g.fill();
+    g.fillStyle = "#b3307d"; // bow tie
+    const bx = X(hd.x), by = Y(J.top - 0.08), bw = s * 0.16;
+    g.beginPath(); g.moveTo(bx, by); g.lineTo(bx - bw, by - bw * 0.6); g.lineTo(bx - bw, by + bw * 0.6); g.closePath(); g.fill();
+    g.beginPath(); g.moveTo(bx, by); g.lineTo(bx + bw, by - bw * 0.6); g.lineTo(bx + bw, by + bw * 0.6); g.closePath(); g.fill();
+    g.fillStyle = "#f2c9a0";
+    g.beginPath(); g.arc(X(hd.x), Y(hd.y), hd.r * s, 0, Math.PI * 2); g.fill();
+    if (!face.length) {
+      g.strokeStyle = "#25303b"; g.lineWidth = 1.5;
+      for (const ex of [-0.14, 0.14]) { g.beginPath(); g.arc(X(hd.x + ex), Y(hd.y + 0.05), s * 0.09, 0, Math.PI * 2); g.stroke(); }
+      g.beginPath(); g.moveTo(X(hd.x - 0.05), Y(hd.y + 0.05)); g.lineTo(X(hd.x + 0.05), Y(hd.y + 0.05)); g.stroke();
+      g.beginPath(); g.arc(X(hd.x), Y(hd.y - 0.12), s * 0.12, 0.15 * Math.PI, 0.85 * Math.PI); g.stroke();
+    }
+    g.fillStyle = "#25303b"; // mortarboard
+    g.beginPath();
+    g.moveTo(X(hd.x - 0.5), Y(hd.y + 0.42)); g.lineTo(X(hd.x), Y(hd.y + 0.58)); g.lineTo(X(hd.x + 0.5), Y(hd.y + 0.42)); g.lineTo(X(hd.x), Y(hd.y + 0.28));
+    g.closePath(); g.fill();
+    g.fillRect(X(hd.x - 0.22), Y(hd.y + 0.4), 0.44 * s, 0.1 * s);
+    g.strokeStyle = "#f2a93b"; g.lineWidth = 2;
+    g.beginPath(); g.moveTo(X(hd.x), Y(hd.y + 0.43)); g.lineTo(X(hd.x + 0.42), Y(hd.y + 0.36)); g.lineTo(X(hd.x + 0.42), Y(hd.y + 0.1)); g.stroke();
+
+    // the arcs so far, one per thread, coloured by block
+    const sel = state.selected, best = done && r.data.verdict.ok ? r.data.truth : null;
+    if (r) {
+      for (let k = 0; k < P.throws; k++) {
+        const strong = k === sel || k === best;
+        g.strokeStyle = BLOCK_COLORS[Math.floor(k / PH.PHYS.threads)];
+        g.globalAlpha = strong ? 0.95 : sel !== null || best !== null ? 0.18 : 0.45;
+        g.lineWidth = strong ? 3 : 1.5;
+        g.beginPath();
+        for (let f = 0; f <= r.frame; f++) {
+          const F = r.data.frames[f], x = X(F[2 * k]), y = Y(F[2 * k + 1]);
+          f ? g.lineTo(x, y) : g.moveTo(x, y);
+        }
+        g.stroke();
+      }
+      g.globalAlpha = 1;
+    }
+
+    // the pies: in the air, squashed where they landed, or on the face
+    const pos = piePositions();
+    const rad = P.pieR * s;
+    for (let k = 0; k < P.throws; k++) {
+      const t = r ? r.data.throws[k] : null;
+      const x = X(pos[2 * k]), y = Y(pos[2 * k + 1]);
+      const landed = t && t.stop && t.stop.step <= step;
+      if (landed && t.stop.kind === "face") continue; // drawn as the splat below
+      g.fillStyle = PIE_CRUST;
+      g.beginPath();
+      if (landed) g.ellipse(x, y, rad * 1.5, rad * 0.6, 0, 0, Math.PI * 2);
+      else g.arc(x, y, rad, 0, Math.PI * 2);
+      g.fill();
+      g.fillStyle = PIE_CREAM;
+      g.beginPath();
+      if (landed) g.ellipse(x, y - rad * 0.2, rad * 1.1, rad * 0.35, 0, 0, Math.PI * 2);
+      else g.arc(x, y - rad * 0.15, rad * 0.65, 0, Math.PI * 2);
+      g.fill();
+      if (k === sel) { g.strokeStyle = "#16202a"; g.lineWidth = 2; g.beginPath(); g.arc(x, y, rad + 4, 0, Math.PI * 2); g.stroke(); }
+    }
+    if (face.length) {
+      // cream over the face, a few drips, and the tin on top
+      g.fillStyle = PIE_CREAM; g.strokeStyle = "#e8dcc4"; g.lineWidth = 1.5;
+      const blobs = [[0, 0, 0.36], [-0.22, 0.12, 0.2], [0.24, -0.08, 0.2], [-0.12, -0.3, 0.14], [0.16, 0.28, 0.13], [0.3, 0.2, 0.1]];
+      for (const [dx, dy, br] of blobs) { g.beginPath(); g.arc(X(hd.x + dx), Y(hd.y + dy), br * s, 0, Math.PI * 2); g.fill(); g.stroke(); }
+      for (const [dx, len] of [[-0.18, 0.3], [0.05, 0.42], [0.22, 0.25]]) {
+        g.fillRect(X(hd.x + dx) - s * 0.035, Y(hd.y - 0.3), s * 0.07, len * s);
+        g.beginPath(); g.arc(X(hd.x + dx), Y(hd.y - 0.3 - len), s * 0.05, 0, Math.PI * 2); g.fill();
+      }
+      g.fillStyle = "#b9c0c8";
+      g.beginPath(); g.ellipse(X(hd.x - 0.05), Y(hd.y + 0.05), s * 0.3, s * 0.12, -0.3, 0, Math.PI * 2); g.fill();
+      g.fillStyle = PIE_CRUST;
+      g.beginPath(); g.ellipse(X(hd.x - 0.05), Y(hd.y + 0.05), s * 0.22, s * 0.07, -0.3, 0, Math.PI * 2); g.fill();
+      g.fillStyle = "#16202a";
+      g.font = `800 ${Math.round(s * 0.36)}px "Big Shoulders Display", "Arial Narrow", sans-serif`;
+      g.fillText(face.length > 1 ? `SPLAT ×${face.length}` : "SPLAT", X(hd.x - 1.2), Y(hd.y + 0.9));
+    }
+    if (best !== null) {
+      g.fillStyle = "#16202a";
+      g.font = `600 ${Math.round(s * 0.2)}px "IBM Plex Sans", system-ui, sans-serif`;
+      g.textAlign = "right";
+      g.fillText(`gentlest: throw ${best} · ${r.data.throws[best].speed.toFixed(2)} m/s`, X(J.x0 - 0.75), Y(0.9));
+      g.textAlign = "center";
+    }
+  }
+  function roundRect(g, x, y, w, h, r) {
+    g.beginPath();
+    g.moveTo(x + r, y); g.lineTo(x + w - r, y); g.quadraticCurveTo(x + w, y, x + w, y + r);
+    g.lineTo(x + w, y + h); g.lineTo(x, y + h); g.lineTo(x, y + r); g.quadraticCurveTo(x, y, x + r, y);
+    g.closePath();
+  }
+  function canvasPie(e) {
+    const cv = $("phys-canvas");
+    if (!cv) return null;
+    const rect = cv.getBoundingClientRect();
+    const s = rect.width / (VIEW.x1 - VIEW.x0);
+    const wx = (e.clientX - rect.left) / s + VIEW.x0, wy = VIEW.y1 - (e.clientY - rect.top) / s;
+    const pos = piePositions();
+    let best = null, bestD = 0.45;
+    for (let k = 0; k < PH.PIE.throws; k++) {
+      const d = Math.hypot(wx - pos[2 * k], wy - pos[2 * k + 1]);
+      if (d < bestD) { best = k; bestD = d; }
+    }
+    return best;
+  }
+  const pieOutcome = (t, step = Infinity) =>
+    !t.stop || t.stop.step > step ? "in the air"
+      : t.stop.kind === "face" ? "hit the face" : `landed on the ${t.stop.kind}`;
+  function vizPies(L) {
+    const r = simRun(), P = PH.PIE;
+    const cols = PH.PHYS.blocks * PH.PHYS.threads;
+    const done = r && atEnd() && !state.playing;
+    const cpu = state.run && state.run.kind === "cpunote";
+    let h = cpu ? `<div class="cpu-core">One CPU core · <code>for (int i = 0; i &lt; 20; ++i) fly(i);</code></div>` : "";
+    h += `<p class="viz-title">The lecture hall, 12 × 8 units · each arc is one thread's throw, coloured by its block</p>`;
+    h += `<canvas id="phys-canvas" class="phys-canvas" role="img" aria-label="Twenty pie throws towards a volunteer professor. Click a pie to inspect its thread."></canvas>`;
+    h += `<p class="viz-title" style="margin-top:12px">Threads · each chip shows threadIdx.x</p>`;
+    h += blockRow(L, cols);
+    h += lane(cols, "thread", threadsOf(L).map((t) => {
+      const c = ["chip"];
+      let style = "";
+      if (t.id >= P.throws) { if (r) c.push("returned"); }
+      else { c.push("ball"); style = ` style="--bc:${BLOCK_COLORS[t.bx]}"`; }
+      if (state.selected === t.id) c.push("selected");
+      return `<button type="button" class="${c.join(" ")}"${style} data-thread="${t.id}" aria-label="${esc(threadLabel(L, t))}">${t.tx}</button>`;
+    }));
+    h += lane(cols, "throw i", threadsOf(L).map((t) => `<span class="ival${t.id >= P.throws ? " bad" : ""}">${t.id}</span>`));
+    if (done)
+      h += lane(cols, "result", threadsOf(L).map((t) => {
+        const th = r.data.throws[t.id];
+        return `<span class="ival${th && th.hit ? " hit" : ""}">${th ? (th.hit ? "hit" : "–") : ""}</span>`;
+      }));
+    const items = BLOCK_COLORS.map((c, b) => [`background:${c}`, `block ${b}`]);
+    items.push(["background:repeating-linear-gradient(135deg,#e3e7ec 0 4px,#cfd6de 4px 8px)", "no throw: returns early"]);
+    return h + legend(items);
+  }
+  function pieTicker(r) {
+    const P = PH.PIE;
+    let now;
+    if (state.run && state.run.kind === "cpunote") now = "<b>CPU loop</b> · one core, one throw after another";
+    else if (!r) now = `<b>Ready.</b> One launch: ${P.throws} threads each fly a whole throw, ${P.steps.toLocaleString("en-US")} steps of 1/960 s.`;
+    else {
+      const step = r.frame * P.every;
+      const onFace = r.data.throws.filter((t) => t.hit && t.hitStep <= step).length;
+      const end = atEnd() && r.data.afterOps.some((o) => o.startsWith("record"))
+        ? ` · gentlest = <b>${r.data.gentlest}</b>` : "";
+      now = `<b>t = ${(step / 960).toFixed(2)} s</b> · step ${step.toLocaleString("en-US")} of ${P.steps.toLocaleString("en-US")} · ${onFace} pie${onFace === 1 ? "" : "s"} on the face${end}`;
+    }
+    return `<span class="now">${now}</span><span class="counters"><span class="counter gpu">GPU: 1 launch, ${P.steps.toLocaleString("en-US")} steps per thread</span>` +
+      `<span class="counter cpu">CPU loop: ${(P.throws * P.steps).toLocaleString("en-US")} steps</span><span class="counter">${P.throws} throws</span></span>`;
+  }
+  function pieInspector(L) {
+    if (state.selected === null) return "Click a pie or a thread to see its throw.";
+    const t = threadsOf(L)[state.selected];
+    if (!t) return "";
+    const head = esc(threadLabel(L, t));
+    if (t.id >= PH.PIE.throws)
+      return `<div class="card"><h4>${head} · no throw</h4><p class="vars">i = ${t.id}, and n = ${PH.PIE.throws}, so this thread returns before throwing.</p></div>`;
+    const r = simRun();
+    const speed = (9.25 + 0.25 * t.id).toFixed(2);
+    let h = `<div class="card"><h4>${head} · throw ${t.id}</h4><p class="vars">speed[${t.id}] = ${speed} m/s at 35°</p>`;
+    if (r) {
+      const th = r.data.throws[t.id], step = r.frame * PH.PIE.every;
+      const when = th.stop && th.stop.step <= step ? ` at t = ${((th.stop.step + 1) / 960).toFixed(2)} s` : "";
+      h += `<p class="vars">${esc(pieOutcome(th, step))}${when}${th.hit ? " · hit = true" : ""}</p>`;
+      if (atEnd() && r.data.racers.includes(t.id))
+        h += `<p class="vars" style="color:var(--bad)">Wrote gentlest = ${t.id} after reading ${PH.PIE.throws}, at the same moment as the other hits.</p>`;
+    }
     return h + `</div>`;
   }
 
@@ -3206,6 +3628,12 @@ if (typeof module !== "undefined") module.exports = Physics;
   $("stage").addEventListener("click", (e) => {
     if (e.target.id === "btn-next") { setLevel(state.level + 1); return; }
     if (e.target.id === "btn-classic") { setLevel(trackLevels("classic")[0]); return; }
+    if (e.target.id === "phys-canvas" && lv().kind === "sweep") {
+      const k = canvasPie(e);
+      state.selected = k === null || k === state.selected ? null : k;
+      renderStage();
+      return;
+    }
     if (e.target.id === "phys-canvas") {
       if (lv().kind !== "physics") return;
       const ball = canvasBall(e);
