@@ -235,7 +235,6 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 .lane { display: grid; gap: 2px; grid-template-columns: 52px repeat(var(--cols), minmax(15px, 1fr)); align-items: center; min-width: calc(52px + var(--cols) * 17px); }
 .lane + .lane { margin-top: 3px; }
 .lane .rowlbl { font: 500 11.5px var(--font-code); color: var(--muted); text-align: right; padding-right: 6px; white-space: nowrap; }
-.lane .gap-row { height: 10px; }
 .blockbox {
   border: 1.5px solid var(--line); border-radius: 7px; padding: 2px 6px; font: 500 11px var(--font-code); color: var(--muted);
   background: white; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -317,7 +316,6 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 .inspector .vars { font: 500 12.5px var(--font-code); margin: 0 0 6px; }
 .inspector ol { margin: 0; padding-left: 30px; font: 12.5px/1.6 var(--font-code); max-height: 160px; overflow: auto; }
 
-.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 /* ---------------------------------------------------------------- physics levels */
 #kernel-list > li.in-loop { margin-left: 18px; }
@@ -1525,7 +1523,7 @@ const Physics = (() => {
 
     const frames = [snap(sim.cur)];
     const faults = [];
-    let firstThreads = null, nothingStored = false, nan = false;
+    let firstThreads = null, nothingStored = false;
     let maxOverlap = 0, overlapPair = null;
     let escaped = null, moved = 0;
 
@@ -1568,7 +1566,6 @@ const Physics = (() => {
 
       for (let i = 0; i < N; i++) {
         const x = S[4 * i], y = S[4 * i + 1], r = RADIUS[i];
-        if (!Number.isFinite(x) || !Number.isFinite(y)) nan = true;
         if (!escaped && (x < -PHYS.halfW - r || x > PHYS.halfW + r || y < -r || y > PHYS.H + r)) escaped = { ball: i, frame: fr };
         moved = Math.max(moved, Math.hypot(x - start.px[i], y - start.py[i]));
         for (let j = i + 1; j < N; j++) {
@@ -1579,12 +1576,11 @@ const Physics = (() => {
           }
         }
       }
-      if (nan) break;
       if (escaped && level.checks.escape && fr >= escaped.frame + 40) break;
     }
 
     return {
-      frames, faults, firstThreads, nothingStored, nan, escaped, moved, maxOverlap, overlapPair,
+      frames, faults, firstThreads, nothingStored, escaped, moved, maxOverlap, overlapPair,
       movers: Array.from(sim.movers), races: sim.races, firstRace: sim.firstRace, inPlaceWriter: sim.inPlaceWriter,
       threadRaces: threads.map((t) => t.races),
     };
@@ -1639,18 +1635,13 @@ const Physics = (() => {
       const guardAt = at(program, "guard");
       const hint = guardAt === -1
         ? `There are ${N} balls but ${PHYS.blocks * PHYS.threads} threads. Add if (i >= n) return; right after computing i.`
-        : guardAt > oob[0].k
-          ? "The bounds check comes too late: move it above the block that reads pos."
-          : "Check the index formula: thread t of block b should get ball b × 8 + t.";
+        : "The bounds check comes too late: move it above the block that reads pos.";
       return fail(`${oob.length} thread${oob.length > 1 ? "s" : ""} went outside the data`,
         `For example ${L(oob[0].thread)} ${oob[0].message}. ${hint}`, { who: oob.map((x) => x.thread) });
     }
 
     if (res.nothingStored)
       return fail("Nothing was stored", level.nothingStored);
-
-    if (res.nan)
-      return fail("The simulation blew up", "Some positions became infinite. Check that every force is added before v is updated.");
 
     if (level.checks.coverage) {
       const missing = [], extra = [];
@@ -1677,11 +1668,9 @@ const Physics = (() => {
     }
 
     if (level.checks.frozen && res.moved < 0.05) {
-      const st = Math.max(at(program, "store"), at(program, "storeInPlace"));
-      const hint = ip === -1
+      return fail("The balls never move", ip === -1
         ? "The velocity changes but nothing moves the ball: add p += v * dt; after the velocity update."
-        : "The store runs before p changes, so it saves the old position. Put the store last.";
-      return fail("The balls never move", st < ip || ip === -1 ? hint : "Check the order: forces, then v, then p, then store.");
+        : "The store runs before p changes, so it saves the old position. Put the store last.");
     }
 
     if (level.checks.overlap && res.maxOverlap > PHYS.overlapLimit) {
@@ -1715,7 +1704,7 @@ const Physics = (() => {
   function runKernelLevel(level, program) {
     const res = simulate(level, program, [0, 1, 2]);
     const verdict = judgeKernel(level, program, res, () => simulate(level, program, [2, 1, 0], res.frames.length - 1));
-    return { kind: "physics", level, program, ...res, steps: stepCounts(program).gpu, verdict };
+    return { kind: "physics", level, program, ...res, verdict };
   }
 
   // ---------------------------------------------------------------- level 4: the time loop
@@ -1767,7 +1756,7 @@ const Physics = (() => {
     const advance = a.v !== undefined && b.v !== undefined ? b.v - a.v : null;
     const sh = frames[21].shown;
     const lag = sh && sh.v !== undefined && b.v !== undefined ? b.v - sh.v : null;
-    const res = { kind: "host", level, program, frames, counts, advance, lag, rewound, firstGarbage, loopOps, frameOps, steps: null };
+    const res = { kind: "host", level, program, frames, counts, advance, lag, rewound, firstGarbage, loopOps, frameOps };
     res.verdict = judgeHost(res);
     return res;
   }
@@ -1940,10 +1929,6 @@ const Physics = (() => {
     number: 4,
     title: "The time loop",
     concept: "Host code and copies",
-    dims: 1,
-    grid: { x: PHYS.blocks, y: 1 },
-    block: { x: PHYS.threads, y: 1 },
-    n: N,
     editorTitle: "Your host code",
     kernelHeader: [
       "// CPU code, once per screen frame",
@@ -2258,7 +2243,7 @@ if (typeof module !== "undefined") module.exports = Physics;
     drag.ghost.style.top = `${e.clientY - drag.offY}px`;
     updateDropTarget(e.clientX, e.clientY);
   });
-  document.addEventListener("pointerup", (e) => {
+  document.addEventListener("pointerup", () => {
     if (!drag) return;
     const d = drag;
     drag = null;
@@ -2460,7 +2445,7 @@ if (typeof module !== "undefined") module.exports = Physics;
       const v = r.data.verdict;
       if (v.ok) {
         state.done[state.level] = true;
-        state.gpuSteps[state.level] = r.data.steps;
+        if (!isSim(lv())) state.gpuSteps[state.level] = r.data.steps; // read by the CPU-loop verdict
         renderTabs();
         save();
       }
@@ -2964,7 +2949,7 @@ if (typeof module !== "undefined") module.exports = Physics;
     const key = [state.level, runSerial, state.selected, state.selectedBall, state.run ? state.run.kind : "idle", r && atEnd() && !state.playing ? "end" : ""].join("|");
     if (key !== vizKey) {
       vizKey = key;
-      $("viz").innerHTML = L.kind === "physics" ? vizKernel(L) : vizHostLoop(L);
+      $("viz").innerHTML = L.kind === "physics" ? vizKernel(L) : vizHostLoop();
     }
     if (L.kind === "host") $("host-live").innerHTML = hostLive();
     paintCanvas();
@@ -3002,7 +2987,7 @@ if (typeof module !== "undefined") module.exports = Physics;
     return h + legend(items);
   }
 
-  function vizHostLoop(L) {
+  function vizHostLoop() {
     const ops = [];
     const p = prog().map((s) => s.type);
     const end = p.indexOf("loopEnd");
