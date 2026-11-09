@@ -7,6 +7,13 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<script>
+  // Apply the saved theme (or the system preference) before the page paints, so there is no light flash.
+  try {
+    const t = localStorage.getItem("threadlab-theme");
+    document.documentElement.dataset.theme = t === "dark" || t === "light" ? t : (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  } catch (e) { /* storage unavailable: stay light */ }
+</script>
 <style>
 :root {
   /* Layout: a three-column lab bench. Palette of blocks, the kernel stack you build, the GPU stage that runs it. */
@@ -28,7 +35,56 @@
   --font-display: "Big Shoulders Display", "Arial Narrow", "Roboto Condensed", sans-serif;
   --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
   --font-code: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  /* Surfaces and visualization tones that flip with the theme. */
+  --surface: #ffffff;
+  --chip: #dbe2ea;
+  --stripe-a: #e3e7ec;
+  --stripe-b: #cfd6de;
+  --viz-bg: #fbfcfd;
+  --dots: #d7dde4;
+  --faint: #9aa5b1;
+  --cpu-tint: #f3ecdd;
+  --cpu-line: #c8b48a;
+  --cpu-ink: #6d4c12;
+  --cpu-ring: #9a6b1d;
+  --canvas-bg: #e4e9ee;
+  --canvas-box: #ffffff;
+  --canvas-grid: #e9edf1;
+  --canvas-wall: #25303b;
+  --canvas-tool: #4b5563;
+  --pie-room: #fbf8f2;
+  --pie-floor: #e9dfcf;
   color-scheme: light;
+}
+:root[data-theme="dark"] {
+  --bench: #0f141a;
+  --panel: #161d25;
+  --surface: #1e2731;
+  --ink: #e4eaf0;
+  --muted: #98a6b5;
+  --line: #313d4a;
+  --accent: #4a7bea;
+  --c-hat: #0a0f14;
+  --good: #3bb26c;
+  --bad: #ee6060;
+  --chip: #2a3441;
+  --stripe-a: #252f3a;
+  --stripe-b: #34404d;
+  --viz-bg: #121920;
+  --dots: #27313c;
+  --faint: #5f6d7c;
+  --cpu-tint: #2d2618;
+  --cpu-line: #6e5c36;
+  --cpu-ink: #e6cd96;
+  --cpu-ring: #d9a441;
+  --canvas-bg: #0d1217;
+  --canvas-box: #182029;
+  --canvas-grid: #222c37;
+  --canvas-wall: #a9b5c2;
+  --canvas-tool: #9aa6b4;
+  --pie-room: #1c1a17;
+  --pie-floor: #2d2820;
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -41,7 +97,7 @@ body {
 }
 button, select { font: inherit; color: inherit; }
 code, .mono { font-family: var(--font-code); }
-:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 60%, white); outline-offset: 2px; }
+:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 60%, var(--surface)); outline-offset: 2px; }
 
 /* ---------------------------------------------------------------- header */
 .topbar {
@@ -65,15 +121,15 @@ button.wordmark:hover span { color: color-mix(in srgb, var(--accent) 80%, black)
   .wordmark span { display: block; }
 }
 .levels { display: grid; gap: 8px; justify-items: start; flex: 1 1 0; min-width: 0; }
-.tracks { display: flex; flex-wrap: wrap; gap: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: white; }
+.tracks { display: flex; flex-wrap: wrap; gap: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--surface); }
 .track {
   border: 0; background: none; padding: 5px 14px; cursor: pointer; font-weight: 600; font-size: 13px;
   display: flex; gap: 8px; align-items: baseline;
 }
 .track + .track { border-left: 1px solid var(--line); }
 .track span { font-weight: 400; font-size: 12px; color: var(--muted); }
-.track[aria-pressed="true"] { background: var(--ink); color: white; }
-.track[aria-pressed="true"] span { color: #c9d3de; }
+.track[aria-pressed="true"] { background: var(--ink); color: var(--panel); }
+.track[aria-pressed="true"] span { color: color-mix(in srgb, var(--panel) 75%, var(--ink)); }
 /* Keep every track's level tabs on one row beside the logo; tabs shrink (and their text wraps) before the row breaks. */
 .tabs { display: flex; gap: 8px; flex-wrap: nowrap; max-width: 100%; }
 .tabs .level-tab { flex: 0 1 auto; }
@@ -86,7 +142,7 @@ button.wordmark:hover span { color: color-mix(in srgb, var(--accent) 80%, black)
 .level-tab {
   display: grid; grid-template-columns: auto auto; align-items: center; column-gap: 8px;
   padding: 6px 12px 6px 8px; border: 1px solid var(--line); border-radius: 10px;
-  background: white; cursor: pointer; text-align: left;
+  background: var(--surface); cursor: pointer; text-align: left;
 }
 .level-tab .num {
   grid-row: span 2; font-family: var(--font-display); font-weight: 800; font-size: 28px; line-height: 1;
@@ -98,7 +154,7 @@ button.wordmark:hover span { color: color-mix(in srgb, var(--accent) 80%, black)
 .level-tab[aria-selected="true"] .num { color: var(--accent); }
 .level-tab.done .state { color: var(--good); font-weight: 600; }
 .level-tab.locked { background: var(--bench); border-color: color-mix(in srgb, var(--line) 70%, transparent); cursor: not-allowed; }
-.level-tab.locked .num, .level-tab.locked .name, .level-tab.locked .state { color: #9aa5b1; }
+.level-tab.locked .num, .level-tab.locked .name, .level-tab.locked .state { color: var(--faint); }
 
 /* ---------------------------------------------------------------- layout */
 .lab {
@@ -149,7 +205,7 @@ button.wordmark:hover span { color: color-mix(in srgb, var(--accent) 80%, black)
   clip-path: polygon(0 6px, 14px 6px, 18px 0, 34px 0, 38px 6px, 100% 6px, 100% calc(100% - 6px), 38px calc(100% - 6px), 34px 100%, 18px 100%, 14px calc(100% - 6px), 0 calc(100% - 6px));
   user-select: none; -webkit-user-select: none; touch-action: none; cursor: grab;
 }
-.block.cat-control { --c: var(--c-control); --fg: var(--ink); }
+.block.cat-control { --c: var(--c-control); --fg: #16202a; }
 .block.cat-memory { --c: var(--c-memory); }
 .block.cat-sync { --c: var(--c-sync); }
 .block.cat-physics { --c: var(--c-physics); }
@@ -158,10 +214,10 @@ button.wordmark:hover span { color: color-mix(in srgb, var(--accent) 80%, black)
 .slot {
   appearance: none; -webkit-appearance: none; border: 0; border-radius: 999px;
   background: rgba(255, 255, 255, .93) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%2316202a'/%3E%3C/svg%3E") no-repeat right 7px center;
-  color: var(--ink); padding: 1px 22px 1px 9px; font: 500 12.5px/1.6 var(--font-code); cursor: pointer;
+  color: #16202a; padding: 1px 22px 1px 9px; font: 500 12.5px/1.6 var(--font-code); cursor: pointer;
 }
 span.slot { display: inline-block; cursor: grab; }
-.slot.mirror { background: rgba(255, 255, 255, .93); padding: 1px 9px; border-radius: 999px; color: var(--ink); }
+.slot.mirror { background: rgba(255, 255, 255, .93); padding: 1px 9px; border-radius: 999px; color: #16202a; }
 .palette-group { margin: 12px 0 4px; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); display: flex; align-items: center; gap: 6px; }
 .palette-group::before { content: ""; width: 10px; height: 10px; border-radius: 3px; background: var(--dot); }
 .palette-list { display: grid; gap: 8px; }
@@ -212,7 +268,7 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 
 /* ---------------------------------------------------------------- buttons */
 .btn {
-  border: 1px solid var(--line); background: white; border-radius: 9px; padding: 7px 14px; cursor: pointer; font-weight: 600; font-size: 14px;
+  border: 1px solid var(--line); background: var(--surface); border-radius: 9px; padding: 7px 14px; cursor: pointer; font-weight: 600; font-size: 14px;
 }
 .btn:hover { border-color: var(--ink); }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: white; }
@@ -227,22 +283,24 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 .controls-main, .controls-side { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .controls-side { position: relative; margin-left: auto; }
 .btn.quiet { background: transparent; border-color: transparent; color: var(--muted); }
-.btn.quiet:hover { background: white; border-color: var(--line); color: var(--ink); }
+.btn.quiet:hover { background: var(--surface); border-color: var(--line); color: var(--ink); }
 .speed-control { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
-.speed-control select { border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; background: white; color: var(--ink); font-size: 13.5px; }
+.speed-control select { border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; background: var(--surface); color: var(--ink); font-size: 13.5px; }
 /* Sound toggle pinned to the header's top-right corner. */
-.sound-toggle {
-  position: absolute; top: 18px; right: 24px;
+.header-tools { position: absolute; top: 18px; right: 24px; display: flex; gap: 8px; }
+.sound-toggle, .theme-toggle {
   display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; font-size: 13px;
 }
 .sound-toggle svg { flex: none; }
 .sound-toggle[aria-pressed="true"] .spk-off, .sound-toggle[aria-pressed="false"] .spk-on { display: none; }
 .sound-toggle[aria-pressed="false"] { color: var(--muted); }
-@media (max-width: 700px) { .sound-toggle { top: 14px; right: 16px; } }
+.theme-toggle svg { flex: none; }
+:root[data-theme="dark"] .theme-toggle .moon, :root:not([data-theme="dark"]) .theme-toggle .sun { display: none; }
+@media (max-width: 700px) { .header-tools { top: 14px; right: 16px; } }
 /* Small phones: icon only; the label stays available to screen readers. */
 @media (max-width: 480px) {
-  .sound-toggle { padding: 7px 9px; }
-  .sound-toggle .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .sound-toggle, .theme-toggle { padding: 7px 9px; }
+  .sound-toggle .label, .theme-toggle .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 }
 .launch {
   background: var(--c-hat); color: #dfe8f3; border-radius: 10px; padding: 9px 12px; font: 500 12.5px/1.45 var(--font-code);
@@ -251,20 +309,20 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 .launch .cm { color: #8fa3b8; }
 .ticker {
   display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; justify-content: space-between;
-  border: 1px solid var(--line); border-radius: 10px; background: white; padding: 8px 12px; margin-bottom: 12px; min-height: 42px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 8px 12px; margin-bottom: 12px; min-height: 42px;
 }
 .ticker .now { font: 500 13px/1.4 var(--font-code); }
 .ticker .now b { font-family: var(--font-body); }
 .counters { display: flex; gap: 6px; flex-wrap: wrap; }
 .counter { font-size: 12.5px; padding: 2px 9px; border-radius: 999px; background: var(--bench); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .counter b { font-weight: 600; }
-.counter.gpu { background: color-mix(in srgb, var(--accent) 14%, white); }
-.counter.cpu { background: #ece7dc; }
+.counter.gpu { background: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
+.counter.cpu { background: var(--cpu-tint); }
 
 .viz {
   border: 1px solid var(--line); border-radius: 12px; padding: 14px; overflow-x: auto;
-  background-color: #fbfcfd;
-  background-image: radial-gradient(circle, #d7dde4 1px, transparent 1.2px);
+  background-color: var(--viz-bg);
+  background-image: radial-gradient(circle, var(--dots) 1px, transparent 1.2px);
   background-size: 14px 14px;
 }
 .viz-title { font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0 0 6px; }
@@ -273,16 +331,16 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 .lane .rowlbl { font: 500 11.5px var(--font-code); color: var(--muted); text-align: right; padding-right: 6px; white-space: nowrap; }
 .blockbox {
   border: 1.5px solid var(--line); border-radius: 7px; padding: 2px 6px; font: 500 11px var(--font-code); color: var(--muted);
-  background: white; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  background: var(--surface); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .chip {
   aspect-ratio: 1; min-height: 18px; min-width: 0; border: 0; border-radius: 5px; padding: 0; cursor: pointer;
-  background: #dbe2ea; color: var(--muted); font: 600 11px var(--font-code); display: grid; place-items: center;
+  background: var(--chip); color: var(--muted); font: 600 11px var(--font-code); display: grid; place-items: center;
   transition: background-color .25s, box-shadow .25s, color .25s;
 }
 .chip.active { background: var(--accent); color: white; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent); }
-.chip.waiting { background: color-mix(in srgb, var(--c-sync) 22%, white); color: var(--c-sync); }
-.chip.returned { background: repeating-linear-gradient(135deg, #e3e7ec 0 4px, #cfd6de 4px 8px); color: #8994a1; }
+.chip.waiting { background: color-mix(in srgb, var(--c-sync) 22%, var(--surface)); color: var(--c-sync); }
+.chip.returned { background: repeating-linear-gradient(135deg, var(--stripe-a) 0 4px, var(--stripe-b) 4px 8px); color: var(--muted); }
 .chip.fault { background: var(--bad); color: white; }
 .chip.lost { box-shadow: inset 0 0 0 2px var(--bad); }
 .chip.kept { box-shadow: inset 0 0 0 2px var(--good); }
@@ -292,20 +350,20 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 .idx { font: 500 10.5px var(--font-code); text-align: center; color: var(--muted); }
 .idx.ghost { color: var(--bad); opacity: .7; }
 .cell {
-  min-height: 24px; border: 1px solid var(--line); border-radius: 4px; background: white; display: grid; place-items: center;
+  min-height: 24px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); display: grid; place-items: center;
   font: 500 12px var(--font-code); font-variant-numeric: tabular-nums; transition: background-color .3s, box-shadow .3s;
 }
 .cell.ghost { background: transparent; border-style: dashed; color: transparent; }
 .cell.read { box-shadow: inset 0 0 0 2px var(--accent); }
-.cell.write { background: color-mix(in srgb, var(--c-memory) 22%, white); border-color: var(--c-memory); }
-.cell.stale { box-shadow: inset 0 0 0 2px var(--bad); background: color-mix(in srgb, var(--bad) 10%, white); }
+.cell.write { background: color-mix(in srgb, var(--c-memory) 22%, var(--surface)); border-color: var(--c-memory); }
+.cell.stale { box-shadow: inset 0 0 0 2px var(--bad); background: color-mix(in srgb, var(--bad) 10%, var(--surface)); }
 .cell.pending { border: 1.5px dashed var(--c-sync); }
-.cell.fault { background: color-mix(in srgb, var(--bad) 18%, white); border: 1.5px dashed var(--bad); color: var(--bad); }
-.cell.cpu { box-shadow: inset 0 0 0 2px #9a6b1d; }
-.cell.empty { color: #a7b1bc; }
+.cell.fault { background: color-mix(in srgb, var(--bad) 18%, var(--surface)); border: 1.5px dashed var(--bad); color: var(--bad); }
+.cell.cpu { box-shadow: inset 0 0 0 2px var(--cpu-ring); }
+.cell.empty { color: var(--faint); }
 .cell.mine { box-shadow: inset 0 0 0 2px var(--ink); }
 .registers { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 14px; align-items: stretch; }
-.register { border: 1px solid var(--line); background: white; border-radius: 10px; padding: 8px 14px; min-width: 150px; }
+.register { border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 8px 14px; min-width: 150px; }
 .register .lbl { font: 500 12px var(--font-code); color: var(--muted); }
 .register .big { font-family: var(--font-display); font-weight: 800; font-size: 40px; line-height: 1; font-variant-numeric: tabular-nums; }
 .register.good .big { color: var(--good); }
@@ -315,39 +373,39 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
 .legend i { width: 14px; height: 14px; border-radius: 3px; display: inline-block; }
 .cpu-core {
-  display: inline-flex; gap: 8px; align-items: center; border: 1px solid #c8b48a; background: #f6efe0; color: #6d4c12;
+  display: inline-flex; gap: 8px; align-items: center; border: 1px solid var(--cpu-line); background: var(--cpu-tint); color: var(--cpu-ink);
   border-radius: 999px; padding: 3px 12px; font-size: 13px; font-weight: 600; margin-bottom: 10px;
 }
 .cpu-core code { font-weight: 500; }
 
 /* image level */
 .images { display: flex; flex-wrap: wrap; gap: 18px 24px; align-items: flex-start; }
-.pixgrid { display: grid; grid-template-columns: repeat(var(--w), var(--px)); gap: 0; border: 1px solid var(--line); background: white; width: max-content; }
+.pixgrid { display: grid; grid-template-columns: repeat(var(--w), var(--px)); gap: 0; border: 1px solid var(--line); background: var(--surface); width: max-content; }
 .pix { appearance: none; -webkit-appearance: none; display: block; margin: 0; font-size: 0; background: none; width: var(--px); height: var(--px); border-right: 1px solid rgba(255, 255, 255, .5); border-bottom: 1px solid rgba(255, 255, 255, .5); cursor: pointer; padding: 0; border-top: 0; border-left: 0; }
 .pix.bx { border-right: 2px solid var(--ink); }
 .pix.by { border-bottom: 2px solid var(--ink); }
-.pix.ghost { background: repeating-linear-gradient(135deg, #eef1f4 0 3px, #dce2e8 3px 6px); }
-.pix.unset { background: #f1f4f7; }
+.pix.ghost { background: repeating-linear-gradient(135deg, var(--stripe-a) 0 3px, var(--stripe-b) 3px 6px); }
+.pix.unset { background: var(--chip); }
 .pix.active { box-shadow: inset 0 0 0 2px var(--accent); }
-.pix.returned { background: repeating-linear-gradient(135deg, #e3e7ec 0 3px, #c7cfd8 3px 6px); }
+.pix.returned { background: repeating-linear-gradient(135deg, var(--stripe-a) 0 3px, var(--stripe-b) 3px 6px); }
 .pix.fault { background: var(--bad) !important; }
 .pix.write { box-shadow: inset 0 0 0 2px var(--c-memory); }
-.pix.cpu { box-shadow: inset 0 0 0 2px #9a6b1d; }
+.pix.cpu { box-shadow: inset 0 0 0 2px var(--cpu-ring); }
 .pix.selected { outline: 2px solid var(--accent); outline-offset: -1px; position: relative; z-index: 1; }
 .imgcap { font-size: 12.5px; color: var(--muted); margin-top: 6px; max-width: 34ch; }
 
 /* ---------------------------------------------------------------- verdict + inspector */
-.verdict { margin-top: 12px; border-radius: 12px; padding: 12px 14px; border: 1px solid var(--line); background: white; display: none; }
+.verdict { margin-top: 12px; border-radius: 12px; padding: 12px 14px; border: 1px solid var(--line); background: var(--surface); display: none; }
 .verdict.show { display: block; }
-.verdict.ok { border-color: var(--good); background: color-mix(in srgb, var(--good) 8%, white); }
-.verdict.bad { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 6%, white); }
+.verdict.ok { border-color: var(--good); background: color-mix(in srgb, var(--good) 8%, var(--surface)); }
+.verdict.bad { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 6%, var(--surface)); }
 .verdict h3 { margin: 0 0 4px; font-size: 17px; }
 .verdict.ok h3 { color: var(--good); }
 .verdict.bad h3 { color: var(--bad); }
 .verdict p { margin: 0; max-width: 75ch; }
 .verdict .btn { margin-top: 10px; }
 .inspector { margin-top: 12px; font-size: 13.5px; color: var(--muted); }
-.inspector .card { border: 1px solid var(--line); background: white; border-radius: 10px; padding: 10px 12px; color: var(--ink); }
+.inspector .card { border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 10px 12px; color: var(--ink); }
 .inspector h4 { margin: 0 0 4px; font-size: 14px; }
 .inspector .vars { font: 500 12.5px var(--font-code); margin: 0 0 6px; }
 .inspector ol { margin: 0; padding-left: 30px; font: 12.5px/1.6 var(--font-code); max-height: 160px; overflow: auto; }
@@ -362,23 +420,23 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 .block.loop-mark {
   --c: var(--c-hat); cursor: default; padding-right: 12px !important; font-weight: 500; color: #dfe8f3;
 }
-.phys-canvas { display: block; width: 100%; aspect-ratio: 13 / 9.2; border-radius: 10px; border: 1px solid var(--line); cursor: pointer; background: #e4e9ee; }
-.chip.ball { background: color-mix(in srgb, var(--bc) 85%, white); color: white; }
+.phys-canvas { display: block; width: 100%; aspect-ratio: 13 / 9.2; border-radius: 10px; border: 1px solid var(--line); cursor: pointer; background: var(--canvas-bg); }
+.chip.ball { background: color-mix(in srgb, var(--bc) 85%, var(--surface)); color: white; }
 .ival.hit { color: var(--good); font-weight: 600; }
 .mem-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, 1fr); gap: 10px 14px; margin-top: 12px; }
 @media (max-width: 560px) { .mem-grid { grid-template-columns: minmax(0, 1fr); } }
 .mem-box {
-  display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; border: 1px solid var(--line); background: white;
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; border: 1px solid var(--line); background: var(--surface);
   border-radius: 8px; padding: 6px 10px; margin-bottom: 6px; font: 500 12.5px/1.4 var(--font-code);
 }
-.mem-box.bad { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 8%, white); }
+.mem-box.bad { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 8%, var(--surface)); }
 .mem-name { color: var(--muted); }
 .mem-val { font-weight: 600; font-variant-numeric: tabular-nums; }
 .mem-box.bad .mem-val { color: var(--bad); }
 .ptr { margin-left: auto; color: var(--accent); font-weight: 600; }
 .rates { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .rate { font-size: 12.5px; padding: 3px 10px; border-radius: 999px; background: var(--bench); font-variant-numeric: tabular-nums; }
-.rate.good { background: color-mix(in srgb, var(--good) 15%, white); color: var(--good); }
+.rate.good { background: color-mix(in srgb, var(--good) 15%, var(--surface)); color: var(--good); }
 .timeline { display: flex; flex-wrap: wrap; gap: 3px; }
 .timeline .op {
   width: 18px; height: 22px; border-radius: 4px; background: var(--oc); color: white;
@@ -388,22 +446,22 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 .nowrap { white-space: nowrap; }
 
 /* ---------------------------------------------------------------- energy chart */
-.echart { background: white; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px 8px; margin: 12px 0 10px; color: var(--ink); }
+.echart { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px 8px; margin: 12px 0 10px; color: var(--ink); }
 .echart h4 { margin: 0; font-size: 14px; }
 .echart .sub { margin: 2px 0 6px; color: var(--muted); font-size: 13px; }
 .echart .keys { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12.5px; margin-bottom: 4px; }
 .echart .keys i, .echart .tip i { display: inline-block; width: 14px; height: 2px; border-radius: 1px; vertical-align: middle; margin-right: 6px; }
 .echart-plot { position: relative; border-radius: 6px; }
 .echart svg { display: block; width: 100%; height: auto; overflow: visible; }
-.echart .grid { stroke: #e6eaee; stroke-width: 1; }
+.echart .grid { stroke: var(--bench); stroke-width: 1; }
 .echart .tick { fill: var(--muted); font: 11px var(--font-body); font-variant-numeric: tabular-nums; }
 .echart .ln { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
-.echart .dot { stroke: white; stroke-width: 2; }
+.echart .dot { stroke: var(--surface); stroke-width: 2; }
 .echart .endlbl { fill: var(--muted); font: 12px var(--font-body); }
 .echart .endlbl .v { fill: var(--ink); font-weight: 600; }
 .echart .xh { stroke: var(--muted); stroke-width: 1; }
 .echart .tip {
-  position: absolute; top: 4px; pointer-events: none; background: white; border: 1px solid var(--line); border-radius: 8px;
+  position: absolute; top: 4px; pointer-events: none; background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
   padding: 6px 10px; font-size: 12px; line-height: 1.5; white-space: nowrap; box-shadow: 0 4px 14px rgba(22, 32, 42, .1);
 }
 .echart .tip .when { color: var(--muted); }
@@ -445,7 +503,7 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
   position: fixed; inset: 0; z-index: 60; overflow-y: auto;
   display: grid; place-items: center; padding: 40px 32px;
   background-color: var(--bench);
-  background-image: radial-gradient(circle, #cbd3dc 1px, transparent 1.3px);
+  background-image: radial-gradient(circle, var(--dots) 1px, transparent 1.3px);
   background-size: 18px 18px;
   transition: opacity .25s ease;
 }
@@ -467,7 +525,7 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 .splash-tracks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; max-width: 520px; }
 .splash-track {
   display: grid; gap: 2px; text-align: left; cursor: pointer;
-  border: 1px solid var(--line); border-radius: 12px; background: white; padding: 12px 14px;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--surface); padding: 12px 14px;
 }
 .splash-track:hover { border-color: var(--ink); }
 .splash-track strong { font-weight: 600; font-size: 15px; }
@@ -487,14 +545,14 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 .splash-chips { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 5px; }
 .splash-chip {
   aspect-ratio: 1; border-radius: 6px; display: grid; place-items: center;
-  background: #dbe2ea; color: var(--muted); font: 600 11px var(--font-code);
+  background: var(--chip); color: var(--muted); font: 600 11px var(--font-code);
   animation: splash-run 3.2s ease-in-out infinite; animation-delay: calc(var(--b) * .35s);
 }
 @keyframes splash-run {
-  0%, 6% { background: #dbe2ea; color: var(--muted); box-shadow: none; }
+  0%, 6% { background: var(--chip); color: var(--muted); box-shadow: none; }
   12%, 32% { background: var(--accent); color: white; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent); }
-  42%, 88% { background: color-mix(in srgb, var(--good) 18%, white); color: var(--good); box-shadow: none; }
-  100% { background: #dbe2ea; color: var(--muted); }
+  42%, 88% { background: color-mix(in srgb, var(--good) 18%, var(--surface)); color: var(--good); box-shadow: none; }
+  100% { background: var(--chip); color: var(--muted); }
 }
 .splash-caption { font-size: 13px; color: var(--muted); margin: 14px 0 0; }
 @media (max-width: 880px) {
@@ -512,7 +570,7 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 .tour-focus { outline: 3px solid var(--accent); outline-offset: 5px; border-radius: 14px; transition: outline-offset .2s ease; }
 .tour-card {
   position: fixed; z-index: 55; width: min(340px, calc(100vw - 32px));
-  background: white; border: 1px solid var(--line); border-radius: 16px; padding: 18px 18px 16px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 18px 18px 16px;
   box-shadow: 0 24px 56px -20px rgba(22, 32, 42, .45);
 }
 .tour-card[hidden] { display: none; }
@@ -540,10 +598,17 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
     <button type="button" class="wordmark" id="btn-home" title="Open the start screen">Thread <span>Lab</span></button>
   </div>
   <nav class="levels" id="levels" aria-label="Tracks and levels"></nav>
+  <div class="header-tools">
+  <button class="btn theme-toggle" type="button" id="btn-theme" aria-pressed="false" title="Switch between light and dark colors">
+    <svg class="moon" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M15.5 12.6A6.5 6.5 0 0 1 7.4 4.5a6.5 6.5 0 1 0 8.1 8.1z" fill="currentColor"/></svg>
+    <svg class="sun" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="10" cy="10" r="3.6" fill="currentColor"/><path d="M10 1.8v2.2M10 16v2.2M1.8 10H4M16 10h2.2M4.2 4.2l1.6 1.6M14.2 14.2l1.6 1.6M4.2 15.8l1.6-1.6M14.2 5.8l1.6-1.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+    <span class="label">Dark mode</span>
+  </button>
   <button class="btn sound-toggle" type="button" id="btn-sound" aria-pressed="true" title="Play a sound when a level is solved">
     <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M3 7.5h3l4.5-3.5v12L6 12.5H3z" fill="currentColor"/><path class="spk-on" d="M13.2 7.3a3.8 3.8 0 0 1 0 5.4M15.6 4.9a7.2 7.2 0 0 1 0 10.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path class="spk-off" d="M13.5 7.5l4.5 5M18 7.5l-4.5 5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
     <span class="label">Sound on</span>
   </button>
+  </div>
 </header>
 <main class="lab">
   <section class="panel mission" id="mission"></section>
@@ -2980,12 +3045,12 @@ const CELEBRATE = {"pics": [{"src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEU
   }
   const LEG_CHIPS = [
     ["background:var(--accent)", "running this step"],
-    ["background:repeating-linear-gradient(135deg,#e3e7ec 0 4px,#cfd6de 4px 8px)", "returned early"],
+    ["background:repeating-linear-gradient(135deg,var(--stripe-a) 0 4px,var(--stripe-b) 4px 8px)", "returned early"],
     ["background:var(--bad)", "crashed"],
   ];
   const LEG_CELLS = [
-    ["box-shadow:inset 0 0 0 2px var(--accent);background:white", "read"],
-    ["background:color-mix(in srgb, var(--c-memory) 22%, white);border:1px solid var(--c-memory)", "written"],
+    ["box-shadow:inset 0 0 0 2px var(--accent);background:var(--surface)", "read"],
+    ["background:color-mix(in srgb, var(--c-memory) 22%, var(--surface));border:1px solid var(--c-memory)", "written"],
   ];
 
   function renderViz() {
@@ -3066,9 +3131,9 @@ const CELEBRATE = {"pics": [{"src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEU
       `<div><p class="viz-title">Threads over the output out[y][x]</p><div class="pixgrid" style="--w:${W};--px:20px">${grid}</div>` +
       `<p class="imgcap">${W} × ${H} threads in ${L.grid.x} × ${L.grid.y} blocks (thick lines). Hatched threads have no pixel. Click one to inspect it.</p></div>` +
       `</div>` + legend([
-        ["box-shadow:inset 0 0 0 2px var(--accent);background:white", "running this step"],
-        ["box-shadow:inset 0 0 0 2px var(--c-memory);background:white", "written this step"],
-        ["background:repeating-linear-gradient(135deg,#e3e7ec 0 3px,#c7cfd8 3px 6px)", "returned early"],
+        ["box-shadow:inset 0 0 0 2px var(--accent);background:var(--surface)", "running this step"],
+        ["box-shadow:inset 0 0 0 2px var(--c-memory);background:var(--surface)", "written this step"],
+        ["background:repeating-linear-gradient(135deg,var(--stripe-a) 0 3px,var(--stripe-b) 3px 6px)", "returned early"],
         ["background:var(--bad)", "crashed"],
       ]);
   }
@@ -3108,11 +3173,11 @@ const CELEBRATE = {"pics": [{"src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEU
       sub = `the new value is not visible to other threads yet · expected ${expected}`;
     h += `<div class="registers"><div class="register ${cls}${ix.write.has("total:0") ? " flash" : ""}"><div class="lbl">total (global)</div><div class="big">${total ?? 0}</div><div class="sub">${sub}</div></div></div>`;
     const cellsLegend = [...LEG_CELLS];
-    if (tree || r?.kind === "gpu") cellsLegend.push(["border:1.5px dashed var(--c-sync);background:white", "written, not visible to other threads yet"]);
-    if (tree) cellsLegend.push(["box-shadow:inset 0 0 0 2px var(--bad);background:white", "read an old value"]);
+    if (tree || r?.kind === "gpu") cellsLegend.push(["border:1.5px dashed var(--c-sync);background:var(--surface)", "written, not visible to other threads yet"]);
+    if (tree) cellsLegend.push(["box-shadow:inset 0 0 0 2px var(--bad);background:var(--surface)", "read an old value"]);
     const chipsLegend = [LEG_CHIPS[0]];
-    if (tree) chipsLegend.push(["background:color-mix(in srgb, var(--c-sync) 22%, white)", "waiting at __syncthreads()"]);
-    else chipsLegend.push(["box-shadow:inset 0 0 0 2px var(--bad);background:#dbe2ea", "update lost"], ["box-shadow:inset 0 0 0 2px var(--good);background:#dbe2ea", "update kept"]);
+    if (tree) chipsLegend.push(["background:color-mix(in srgb, var(--c-sync) 22%, var(--surface))", "waiting at __syncthreads()"]);
+    else chipsLegend.push(["box-shadow:inset 0 0 0 2px var(--bad);background:var(--chip)", "update lost"], ["box-shadow:inset 0 0 0 2px var(--good);background:var(--chip)", "update kept"]);
     return h + legend([...chipsLegend, ...cellsLegend]);
   }
 
@@ -3225,6 +3290,15 @@ const CELEBRATE = {"pics": [{"src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEU
     return { balls: shown.g ? PH.garbageState(shown.g) : PH.refState(shown.v), garbage: !!shown.g };
   }
 
+  // Canvas colors come from the CSS theme tokens; refreshed whenever the theme changes.
+  const TC = {};
+  function readCanvasTheme() {
+    const cs = getComputedStyle(document.documentElement);
+    const v = (n) => cs.getPropertyValue(n).trim();
+    Object.assign(TC, { bg: v("--canvas-bg"), box: v("--canvas-box"), grid: v("--canvas-grid"), wall: v("--canvas-wall"),
+      muted: v("--muted"), ink: v("--ink"), room: v("--pie-room"), floor: v("--pie-floor"), tool: v("--canvas-tool") });
+  }
+  readCanvasTheme();
   function paintCanvas() {
     const cv = $("phys-canvas");
     if (!cv) return;
@@ -3241,21 +3315,21 @@ const CELEBRATE = {"pics": [{"src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEU
     const X = (x) => (x - VIEW.x0) * s, Y = (y) => (VIEW.y1 - y) * s;
     if (L.kind === "sweep") { paintPies(g, w, h, s, X, Y); return; }
     const { halfW, H } = PH.PHYS;
-    g.fillStyle = "#e4e9ee";
+    g.fillStyle = TC.bg;
     g.fillRect(0, 0, w, h);
-    g.fillStyle = "#ffffff";
+    g.fillStyle = TC.box;
     g.fillRect(X(-halfW), Y(H), 2 * halfW * s, H * s);
-    g.strokeStyle = "#e9edf1";
+    g.strokeStyle = TC.grid;
     g.lineWidth = 1;
     for (let x = -halfW + 1; x < halfW; x++) { g.beginPath(); g.moveTo(X(x), Y(0)); g.lineTo(X(x), Y(H)); g.stroke(); }
     for (let y = 1; y < H; y++) { g.beginPath(); g.moveTo(X(-halfW), Y(y)); g.lineTo(X(halfW), Y(y)); g.stroke(); }
-    g.strokeStyle = "#25303b";
+    g.strokeStyle = TC.wall;
     g.lineWidth = 3;
     g.strokeRect(X(-halfW), Y(H), 2 * halfW * s, H * s);
 
     const pic = simPicture(L);
     if (!pic.balls) {
-      g.fillStyle = "#586574";
+      g.fillStyle = TC.muted;
       g.font = `600 15px "IBM Plex Sans", system-ui, sans-serif`;
       g.textAlign = "center";
       g.fillText("Nothing has been drawn yet", w / 2, h / 2);
@@ -3304,7 +3378,7 @@ const CELEBRATE = {"pics": [{"src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEU
     if (pic.ghost) {
       g.setLineDash([4, 3]);
       g.lineWidth = 1.5;
-      g.strokeStyle = "#16202a";
+      g.strokeStyle = TC.ink;
       for (let i = 0; i < PH.PHYS.count; i++) {
         g.beginPath();
         g.arc(X(pic.ghost[4 * i]), Y(pic.ghost[4 * i + 1]), PH.RADIUS[i] * s, 0, Math.PI * 2);
@@ -3323,7 +3397,7 @@ const CELEBRATE = {"pics": [{"src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEU
     const first = r && L.kind === "physics" ? r.data.firstThreads : null;
     const sel = state.selected !== null ? (first ? first[state.selected].i : state.selected) : state.selectedBall;
     if (L.kind === "physics" && sel !== null && sel !== undefined && sel >= 0 && sel < PH.PHYS.count) {
-      ring(sel, "#16202a", 3);
+      ring(sel, TC.ink, 3);
       const x = X(B[4 * sel]), y = Y(B[4 * sel + 1]);
       const vx = B[4 * sel + 2] * s * 0.12, vy = -B[4 * sel + 3] * s * 0.12; // arrow: 0.12 s of travel
       if (Math.hypot(vx, vy) > 4) {
@@ -3331,7 +3405,7 @@ const CELEBRATE = {"pics": [{"src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEU
         g.moveTo(x, y);
         g.lineTo(x + vx, y + vy);
         g.lineWidth = 2.5;
-        g.strokeStyle = "#16202a";
+        g.strokeStyle = TC.ink;
         g.stroke();
         const a = Math.atan2(vy, vx);
         g.beginPath();
@@ -3339,7 +3413,7 @@ const CELEBRATE = {"pics": [{"src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEU
         g.lineTo(x + vx - 8 * Math.cos(a - 0.45), y + vy - 8 * Math.sin(a - 0.45));
         g.lineTo(x + vx - 8 * Math.cos(a + 0.45), y + vy - 8 * Math.sin(a + 0.45));
         g.closePath();
-        g.fillStyle = "#16202a";
+        g.fillStyle = TC.ink;
         g.fill();
       }
     }
@@ -3397,9 +3471,9 @@ const CELEBRATE = {"pics": [{"src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEU
       return `<span class="ival${i !== undefined && i >= PH.PHYS.count ? " bad" : ""}">${i ?? ""}</span>`;
     }));
     const items = BLOCK_COLORS.map((c, b) => [`background:${c}`, `block ${b}`]);
-    items.push(["background:repeating-linear-gradient(135deg,#e3e7ec 0 4px,#cfd6de 4px 8px)", "no ball: returns early"]);
+    items.push(["background:repeating-linear-gradient(135deg,var(--stripe-a) 0 4px,var(--stripe-b) 4px 8px)", "no ball: returns early"]);
     if (r && r.data.faults.length) items.push(["background:var(--bad)", "crashed"]);
-    if (r && r.data.verdict.ghost) items.push(["border:1.5px dashed var(--ink);border-radius:50%;background:white", "same kernel, blocks run in reverse order"]);
+    if (r && r.data.verdict.ghost) items.push(["border:1.5px dashed var(--ink);border-radius:50%;background:var(--surface)", "same kernel, blocks run in reverse order"]);
     return h + legend(items);
   }
 
@@ -3619,25 +3693,25 @@ const CELEBRATE = {"pics": [{"src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEU
     const face = r ? r.data.throws.filter((t) => t.hit && t.hitStep <= step) : [];
     const done = r && atEnd() && !state.playing;
     // the room: a wall, a floor and a banner
-    g.fillStyle = "#e4e9ee"; g.fillRect(0, 0, w, h);
-    g.fillStyle = "#fbf8f2"; g.fillRect(X(-halfW), Y(H), 2 * halfW * s, H * s);
-    g.fillStyle = "#e9dfcf"; g.fillRect(X(-halfW), Y(0.55), 2 * halfW * s, 0.55 * s);
-    g.fillStyle = "#25303b";
+    g.fillStyle = TC.bg; g.fillRect(0, 0, w, h);
+    g.fillStyle = TC.room; g.fillRect(X(-halfW), Y(H), 2 * halfW * s, H * s);
+    g.fillStyle = TC.floor; g.fillRect(X(-halfW), Y(0.55), 2 * halfW * s, 0.55 * s);
+    g.fillStyle = TC.wall;
     g.font = `800 ${Math.round(s * 0.42)}px "Big Shoulders Display", "Arial Narrow", sans-serif`;
     g.textAlign = "center"; g.textBaseline = "middle";
     g.fillText("CHARITY PIE DAY", X(0), Y(7.3));
     g.font = `500 ${Math.round(s * 0.2)}px "IBM Plex Sans", system-ui, sans-serif`;
-    g.fillStyle = "#586574";
+    g.fillStyle = TC.muted;
     g.fillText("one thread per throw · find the gentlest that lands", X(0), Y(6.85));
-    g.strokeStyle = "#25303b"; g.lineWidth = 3;
+    g.strokeStyle = TC.wall; g.lineWidth = 3;
     g.strokeRect(X(-halfW), Y(H), 2 * halfW * s, H * s);
 
     // the launcher: a tripod with a spoon arm at the hand position
-    g.strokeStyle = "#4b5563"; g.lineWidth = Math.max(2, s * 0.07); g.lineCap = "round";
+    g.strokeStyle = TC.tool; g.lineWidth = Math.max(2, s * 0.07); g.lineCap = "round";
     const hx = P.hand.x, hy = P.hand.y;
     for (const dx of [-0.45, 0.45]) { g.beginPath(); g.moveTo(X(hx - 0.2), Y(hy - 0.35)); g.lineTo(X(hx - 0.2 + dx), Y(0.02)); g.stroke(); }
     g.beginPath(); g.moveTo(X(hx - 0.2), Y(hy - 0.35)); g.lineTo(X(hx + 0.05), Y(hy - 0.05)); g.stroke();
-    g.fillStyle = "#4b5563"; g.beginPath(); g.arc(X(hx - 0.2), Y(hy - 0.35), s * 0.09, 0, Math.PI * 2); g.fill();
+    g.fillStyle = TC.tool; g.beginPath(); g.arc(X(hx - 0.2), Y(hy - 0.35), s * 0.09, 0, Math.PI * 2); g.fill();
 
     // the professor: the photo, scaled so his face is at the head position and his feet on the floor
     const hd = P.head, k = (hd.y - 0.02) / (PROF_PHOTO.h - PROF_PHOTO.faceY), hr = PROF_PHOTO.headR * k;
@@ -3680,7 +3754,7 @@ const CELEBRATE = {"pics": [{"src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEU
       if (landed) g.ellipse(x, y - rad * 0.2, rad * 1.1, rad * 0.35, 0, 0, Math.PI * 2);
       else g.arc(x, y - rad * 0.15, rad * 0.65, 0, Math.PI * 2);
       g.fill();
-      if (k === sel) { g.strokeStyle = "#16202a"; g.lineWidth = 2; g.beginPath(); g.arc(x, y, rad + 4, 0, Math.PI * 2); g.stroke(); }
+      if (k === sel) { g.strokeStyle = TC.ink; g.lineWidth = 2; g.beginPath(); g.arc(x, y, rad + 4, 0, Math.PI * 2); g.stroke(); }
     }
     if (face.length) {
       // cream over the face, a few drips, and the tin on top
@@ -3696,12 +3770,12 @@ const CELEBRATE = {"pics": [{"src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEU
       g.beginPath(); g.ellipse(X(hd.x - 0.1 * hr), Y(hd.y + 0.15 * hr), s * hr * 0.85, s * hr * 0.34, -0.3, 0, Math.PI * 2); g.fill();
       g.fillStyle = PIE_CRUST;
       g.beginPath(); g.ellipse(X(hd.x - 0.1 * hr), Y(hd.y + 0.15 * hr), s * hr * 0.62, s * hr * 0.2, -0.3, 0, Math.PI * 2); g.fill();
-      g.fillStyle = "#16202a";
+      g.fillStyle = TC.ink;
       g.font = `800 ${Math.round(s * 0.36)}px "Big Shoulders Display", "Arial Narrow", sans-serif`;
       g.fillText(face.length > 1 ? `SPLAT ×${face.length}` : "SPLAT", X(hd.x - 1.3), Y(hd.y + 0.85));
     }
     if (best !== null) {
-      g.fillStyle = "#16202a";
+      g.fillStyle = TC.ink;
       g.font = `600 ${Math.round(s * 0.2)}px "IBM Plex Sans", system-ui, sans-serif`;
       g.textAlign = "right";
       g.fillText(`gentlest: throw ${best} · ${r.data.throws[best].speed.toFixed(2)} m/s`, X(P.jacket.x0 - 0.3), Y(0.9));
@@ -3756,7 +3830,7 @@ const CELEBRATE = {"pics": [{"src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEU
         return `<span class="ival${th && th.hit ? " hit" : ""}">${th ? (th.hit ? "hit" : "–") : ""}</span>`;
       }));
     const items = BLOCK_COLORS.map((c, b) => [`background:${c}`, `block ${b}`]);
-    items.push(["background:repeating-linear-gradient(135deg,#e3e7ec 0 4px,#cfd6de 4px 8px)", "no throw: returns early"]);
+    items.push(["background:repeating-linear-gradient(135deg,var(--stripe-a) 0 4px,var(--stripe-b) 4px 8px)", "no throw: returns early"]);
     return h + legend(items);
   }
   function pieTicker(r) {
@@ -3913,6 +3987,29 @@ const CELEBRATE = {"pics": [{"src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEU
     showSoundButton();
   });
   showSoundButton();
+  // Theme: follows the system until the learner picks one with the header toggle.
+  const THEME_KEY = "threadlab-theme";
+  const showThemeButton = () => {
+    const dark = document.documentElement.dataset.theme === "dark";
+    $("btn-theme").setAttribute("aria-pressed", String(dark));
+  };
+  const applyTheme = (theme) => {
+    document.documentElement.dataset.theme = theme;
+    showThemeButton();
+    readCanvasTheme();
+    paintCanvas();
+  };
+  $("btn-theme").addEventListener("click", () => {
+    const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+    try { localStorage.setItem(THEME_KEY, next); } catch (e) { /* storage unavailable */ }
+    applyTheme(next);
+  });
+  matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", (e) => {
+    let saved = null;
+    try { saved = localStorage.getItem(THEME_KEY); } catch (e2) { /* storage unavailable */ }
+    if (saved !== "dark" && saved !== "light") applyTheme(e.matches ? "dark" : "light");
+  });
+  showThemeButton();
   $("speed").addEventListener("change", (e) => { state.speed = e.target.value; });
   $("levels").addEventListener("click", (e) => {
     const tab = e.target.closest("[data-level]");
