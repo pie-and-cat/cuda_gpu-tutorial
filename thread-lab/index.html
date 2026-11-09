@@ -45,6 +45,7 @@ code, .mono { font-family: var(--font-code); }
 
 /* ---------------------------------------------------------------- header */
 .topbar {
+  position: relative;
   display: flex; flex-wrap: nowrap; align-items: flex-start; justify-content: flex-start;
   gap: 12px 32px; padding: 18px 24px 14px;
   border-bottom: 1px solid var(--line);
@@ -226,16 +227,23 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 .controls-main, .controls-side { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .controls-side { position: relative; margin-left: auto; }
 .btn.quiet { background: transparent; border-color: transparent; color: var(--muted); }
-.btn.quiet:hover, .btn.quiet[aria-expanded="true"] { background: white; border-color: var(--line); color: var(--ink); }
-.settings-menu {
-  position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; width: 260px;
-  display: grid; gap: 12px; padding: 14px; background: white; border: 1px solid var(--line); border-radius: 12px;
-  box-shadow: 0 16px 36px -18px rgba(22, 32, 42, .4);
+.btn.quiet:hover { background: white; border-color: var(--line); color: var(--ink); }
+.speed-control { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.speed-control select { border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; background: white; color: var(--ink); font-size: 13.5px; }
+/* Sound toggle pinned to the header's top-right corner. */
+.sound-toggle {
+  position: absolute; top: 18px; right: 24px;
+  display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; font-size: 13px;
 }
-.settings-menu[hidden] { display: none; }
-.setting { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13.5px; }
-.setting select { border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; background: white; font-size: 13.5px; }
-.setting input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); margin: 0; }
+.sound-toggle svg { flex: none; }
+.sound-toggle[aria-pressed="true"] .spk-off, .sound-toggle[aria-pressed="false"] .spk-on { display: none; }
+.sound-toggle[aria-pressed="false"] { color: var(--muted); }
+@media (max-width: 700px) { .sound-toggle { top: 14px; right: 16px; } }
+/* Small phones: icon only; the label stays available to screen readers. */
+@media (max-width: 480px) {
+  .sound-toggle { padding: 7px 9px; }
+  .sound-toggle .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}
 .launch {
   background: var(--c-hat); color: #dfe8f3; border-radius: 10px; padding: 9px 12px; font: 500 12.5px/1.45 var(--font-code);
   overflow-x: auto; white-space: pre; margin-bottom: 10px;
@@ -532,6 +540,10 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
     <button type="button" class="wordmark" id="btn-home" title="Open the start screen">Thread <span>Lab</span></button>
   </div>
   <nav class="levels" id="levels" aria-label="Tracks and levels"></nav>
+  <button class="btn sound-toggle" type="button" id="btn-sound" aria-pressed="true" title="Play a sound when a level is solved">
+    <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M3 7.5h3l4.5-3.5v12L6 12.5H3z" fill="currentColor"/><path class="spk-on" d="M13.2 7.3a3.8 3.8 0 0 1 0 5.4M15.6 4.9a7.2 7.2 0 0 1 0 10.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path class="spk-off" d="M13.5 7.5l4.5 5M18 7.5l-4.5 5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+    <span class="label">Sound on</span>
+  </button>
 </header>
 <main class="lab">
   <section class="panel mission" id="mission"></section>
@@ -548,15 +560,9 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
         </div>
         <div class="controls-side">
           <button class="btn quiet" type="button" id="btn-reset" hidden>Reset simulation</button>
-          <button class="btn quiet" type="button" id="btn-settings" aria-expanded="false" aria-controls="settings-menu">Settings</button>
-          <div class="settings-menu" id="settings-menu" role="group" aria-label="Settings" hidden>
-            <label class="setting" for="speed"><span>Animation speed</span>
-              <select id="speed"><option value="slow">Slow</option><option value="normal" selected>Normal</option><option value="fast">Fast</option></select>
-            </label>
-            <label class="setting" for="opt-sound"><span>Sound when a level is solved</span>
-              <input type="checkbox" id="opt-sound" checked>
-            </label>
-          </div>
+          <label class="speed-control" for="speed">Speed
+            <select id="speed"><option value="slow">Slow</option><option value="normal" selected>Normal</option><option value="fast">Fast</option></select>
+          </label>
         </div>
       </div>
     </div>
@@ -3502,7 +3508,9 @@ const CELEBRATE = {"pics": [{"src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEU
   let soundOn = true;
   try { soundOn = localStorage.getItem(SOUND_KEY) !== "off"; } catch (e) { /* storage unavailable */ }
   const showSoundButton = () => {
-    $("opt-sound").checked = soundOn;
+    const b = $("btn-sound");
+    b.querySelector(".label").textContent = soundOn ? "Sound on" : "Sound off";
+    b.setAttribute("aria-pressed", String(soundOn));
   };
   const yippee = new Audio(CELEBRATE.sound);
   yippee.preload = "auto";
@@ -3899,27 +3907,13 @@ const CELEBRATE = {"pics": [{"src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEU
     resetRun();
     $("btn-run").focus(); // the reset button hides itself once there is nothing to reset
   });
-  $("opt-sound").addEventListener("change", (e) => {
-    soundOn = e.target.checked;
+  $("btn-sound").addEventListener("click", () => {
+    soundOn = !soundOn;
     try { localStorage.setItem(SOUND_KEY, soundOn ? "on" : "off"); } catch (e) { /* storage unavailable */ }
+    showSoundButton();
   });
   showSoundButton();
   $("speed").addEventListener("change", (e) => { state.speed = e.target.value; });
-  // Settings menu: a disclosure that closes on Escape or a click outside it.
-  function setSettingsOpen(open, returnFocus) {
-    $("settings-menu").hidden = !open;
-    $("btn-settings").setAttribute("aria-expanded", String(open));
-    if (open) $("speed").focus();
-    else if (returnFocus) $("btn-settings").focus();
-  }
-  $("btn-settings").addEventListener("click", () => setSettingsOpen($("settings-menu").hidden));
-  $("settings-menu").addEventListener("keydown", (e) => { if (e.key === "Escape") { e.preventDefault(); setSettingsOpen(false, true); } });
-  document.addEventListener("pointerdown", (e) => {
-    if (!$("settings-menu").hidden && !e.target.closest(".controls-side")) setSettingsOpen(false);
-  });
-  document.addEventListener("focusin", (e) => {
-    if (!$("settings-menu").hidden && !e.target.closest(".controls-side")) setSettingsOpen(false);
-  });
   $("levels").addEventListener("click", (e) => {
     const tab = e.target.closest("[data-level]");
     if (tab) { if (tab.getAttribute("aria-disabled") !== "true") setLevel(Number(tab.dataset.level)); return; }
