@@ -58,6 +58,11 @@ code, .mono { font-family: var(--font-code); }
 .wordmark span { color: var(--accent); }
 button.wordmark { background: none; border: 0; padding: 0; color: inherit; cursor: pointer; border-radius: 4px; }
 button.wordmark:hover span { color: color-mix(in srgb, var(--accent) 80%, black); }
+/* Wide screens: stack the logo so it spans the track switcher and the level row beside it. */
+@media (min-width: 1421px) {
+  .wordmark { font-size: 58px; line-height: .8; text-align: left; letter-spacing: .015em; }
+  .wordmark span { display: block; }
+}
 .levels { display: grid; gap: 8px; justify-items: start; flex: 1 1 0; min-width: 0; }
 .tracks { display: flex; flex-wrap: wrap; gap: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: white; }
 .track {
