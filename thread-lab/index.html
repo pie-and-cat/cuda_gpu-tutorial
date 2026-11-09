@@ -56,6 +56,8 @@ code, .mono { font-family: var(--font-code); }
   letter-spacing: .02em; text-transform: uppercase; margin: 0;
 }
 .wordmark span { color: var(--accent); }
+button.wordmark { background: none; border: 0; padding: 0; color: inherit; cursor: pointer; border-radius: 4px; }
+button.wordmark:hover span { color: color-mix(in srgb, var(--accent) 80%, black); }
 .levels { display: grid; gap: 8px; justify-items: start; }
 .tracks { display: flex; flex-wrap: wrap; gap: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: white; }
 .track {
@@ -403,6 +405,73 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 }
 @keyframes yippee-fade { 0% { opacity: 0; } 15%, 75% { opacity: 1; } 100% { opacity: 0; } }
 
+/* ---------------------------------------------------------------- splash screen */
+.splash {
+  position: fixed; inset: 0; z-index: 60; overflow-y: auto;
+  display: grid; place-items: center; padding: 40px 32px;
+  background-color: var(--bench);
+  background-image: radial-gradient(circle, #cbd3dc 1px, transparent 1.3px);
+  background-size: 18px 18px;
+  transition: opacity .25s ease;
+}
+.splash[hidden] { display: none; }
+.splash.leaving { opacity: 0; }
+.splash-inner {
+  width: min(1120px, 100%); display: grid; gap: 56px; align-items: center;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+}
+.splash-title {
+  font-family: var(--font-display); font-weight: 800; text-transform: uppercase;
+  font-size: clamp(64px, 8vw, 124px); line-height: .8; letter-spacing: .01em; margin: 6px 0 24px; overflow-wrap: anywhere;
+}
+.splash-title span { display: block; color: var(--accent); }
+.splash-lede { font-size: 18px; line-height: 1.5; max-width: 42ch; margin: 0 0 28px; }
+.splash-start { padding: 12px 22px; font-size: 16px; border-radius: 11px; }
+.splash-start b { font-weight: 600; opacity: .85; }
+.splash-or { margin: 28px 0 8px; font-size: 12px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.splash-tracks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; max-width: 520px; }
+.splash-track {
+  display: grid; gap: 2px; text-align: left; cursor: pointer;
+  border: 1px solid var(--line); border-radius: 12px; background: white; padding: 12px 14px;
+}
+.splash-track:hover { border-color: var(--ink); }
+.splash-track strong { font-weight: 600; font-size: 15px; }
+.splash-track span { font-size: 13px; color: var(--muted); }
+.splash-gpu {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 20px;
+  box-shadow: 0 24px 48px -28px rgba(22, 32, 42, .35);
+}
+.splash-gpu-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 12px; }
+.splash-gpu-head h2 { font-family: var(--font-display); font-weight: 700; font-size: 22px; letter-spacing: .03em; text-transform: uppercase; margin: 0; line-height: 1; }
+.splash-gpu-head span { font-size: 12.5px; color: var(--muted); }
+.splash-code { background: var(--c-hat); color: #dfe8f3; border-radius: 10px; padding: 10px 12px; font: 500 12.5px/1.5 var(--font-code); white-space: pre-wrap; margin-bottom: 16px; }
+.splash-code .kw { color: #9fc0ff; }
+.splash-code .cm { color: #8fa3b8; }
+.splash-block + .splash-block { margin-top: 10px; }
+.splash-block-label { font: 500 11px var(--font-code); color: var(--muted); margin-bottom: 4px; }
+.splash-chips { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 5px; }
+.splash-chip {
+  aspect-ratio: 1; border-radius: 6px; display: grid; place-items: center;
+  background: #dbe2ea; color: var(--muted); font: 600 11px var(--font-code);
+  animation: splash-run 3.2s ease-in-out infinite; animation-delay: calc(var(--b) * .35s);
+}
+@keyframes splash-run {
+  0%, 6% { background: #dbe2ea; color: var(--muted); box-shadow: none; }
+  12%, 32% { background: var(--accent); color: white; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent); }
+  42%, 88% { background: color-mix(in srgb, var(--good) 18%, white); color: var(--good); box-shadow: none; }
+  100% { background: #dbe2ea; color: var(--muted); }
+}
+.splash-caption { font-size: 13px; color: var(--muted); margin: 14px 0 0; }
+@media (max-width: 880px) {
+  .splash { place-items: start center; padding: 28px 20px; }
+  .splash-inner { grid-template-columns: minmax(0, 1fr); gap: 32px; }
+}
+@media (max-width: 480px) {
+  .splash-tracks { grid-template-columns: minmax(0, 1fr); }
+  .splash-chips { gap: 3px; }
+  .splash-chip { font-size: 9.5px; border-radius: 4px; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
 }
@@ -410,9 +479,10 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 </style>
 </head>
 <body>
+<div class="splash" id="splash" role="dialog" aria-modal="true" aria-labelledby="splash-title" hidden></div>
 <header class="topbar">
   <div class="brand">
-    <p class="wordmark">Thread <span>Lab</span></p>
+    <button type="button" class="wordmark" id="btn-home" title="Open the start screen">Thread <span>Lab</span></button>
   </div>
   <nav class="levels" id="levels" aria-label="Tracks and levels"></nav>
 </header>
@@ -3843,6 +3913,76 @@ const CELEBRATE = {"pics": [{"src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEU
       `<ul>${items}</ul></details>`;
   }
 
+  // ------------------------------------------------------------ splash screen
+  const backdrop = () => document.querySelectorAll("body > header, body > main, body > footer");
+  let splashReturnFocus = null;
+  function openSplash() {
+    const el = $("splash");
+    const L = lv();
+    const started = state.done.some(Boolean) || state.programs.some((p, i) => p.length !== LEVELS[i].start.length) || state.level !== 0;
+    const tracks = TRACKS.map(([id, name]) => {
+      const all = trackLevels(id), solved = all.filter((i) => state.done[i]).length;
+      const meta = solved === all.length ? `All ${all.length} levels solved` : solved ? `${solved} of ${all.length} solved` : `${all.length} levels`;
+      return `<button type="button" class="splash-track" data-splash-track="${id}"><strong>${esc(name)}</strong><span>${meta}</span></button>`;
+    }).join("");
+    const blocks = range(4).map((b) =>
+      `<div class="splash-block"><div class="splash-block-label">block ${b}</div><div class="splash-chips" style="--b:${b}">` +
+      range(8).map((t) => `<span class="splash-chip">${b * 8 + t}</span>`).join("") + `</div></div>`).join("");
+    el.innerHTML =
+      `<div class="splash-inner">` +
+      `<div class="splash-copy">` +
+      `<p class="eyebrow">A CUDA workshop game</p>` +
+      `<h1 class="splash-title" id="splash-title">Thread <span>Lab</span></h1>` +
+      `<p class="splash-lede">Learn how a GPU splits work across thousands of threads by building CUDA kernels from blocks and watching each thread run.</p>` +
+      `<button type="button" class="btn primary splash-start" data-splash-start>${started ? "Continue" : "Start"} <b>· Level ${L.number}: ${esc(L.title)}</b></button>` +
+      `<p class="splash-or">Or choose a track</p><div class="splash-tracks">${tracks}</div>` +
+      `</div>` +
+      `<div class="splash-gpu" aria-hidden="true">` +
+      `<div class="splash-gpu-head"><h2>The GPU</h2><span>4 blocks × 8 threads</span></div>` +
+      `<div class="splash-code"><span class="kw">int</span> i = blockIdx.x * blockDim.x + threadIdx.x;\n<span class="cm">// every thread gets its own i</span></div>` +
+      blocks +
+      `<p class="splash-caption">Each block's threads run the same step together, each on its own element.</p>` +
+      `</div></div>`;
+    splashReturnFocus = document.activeElement;
+    el.classList.remove("leaving");
+    el.hidden = false;
+    backdrop().forEach((n) => { n.inert = true; });
+    document.documentElement.style.overflow = "hidden";
+    el.querySelector("[data-splash-start]").focus();
+  }
+  function closeSplash(level) {
+    const el = $("splash");
+    if (el.hidden || el.classList.contains("leaving")) return;
+    backdrop().forEach((n) => { n.inert = false; });
+    document.documentElement.style.overflow = "";
+    const changed = level !== undefined && level !== state.level;
+    if (changed) setLevel(level);
+    const done = () => { el.hidden = true; el.classList.remove("leaving"); el.innerHTML = ""; };
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) done();
+    else { el.classList.add("leaving"); setTimeout(done, 250); }
+    const target = !changed && splashReturnFocus && splashReturnFocus.id === "btn-home" ? splashReturnFocus : document.querySelector("#mission h1");
+    if (target) {
+      if (target.tagName === "H1") target.tabIndex = -1;
+      target.focus({ preventScroll: true });
+    }
+  }
+  $("splash").addEventListener("click", (e) => {
+    if (e.target.closest("[data-splash-start]")) { closeSplash(); return; }
+    const track = e.target.closest("[data-splash-track]");
+    if (!track) return;
+    const all = trackLevels(track.dataset.splashTrack);
+    closeSplash(all.find((i) => !state.done[i]) ?? all[0]);
+  });
+  $("splash").addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { e.preventDefault(); closeSplash(); return; }
+    if (e.key !== "Tab") return;
+    const items = [...$("splash").querySelectorAll("button")];
+    const first = items[0], last = items[items.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  });
+  $("btn-home").addEventListener("click", () => { pause(); openSplash(); });
+
   function start(data) {
     renderCredits();
     let saved = data && Array.isArray(data.programs) ? data : null;
@@ -3853,6 +3993,7 @@ const CELEBRATE = {"pics": [{"src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEU
     const fromHash = levelFromHash();
     if (fromHash >= 0) state.level = fromHash;
     renderAll();
+    if (fromHash < 0) openSplash(); // deep links to a level skip the start screen
     window.claude?.hot?.snapshot?.(() => snapshotState());
   }
   window.addEventListener("hashchange", () => {
