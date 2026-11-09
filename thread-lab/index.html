@@ -96,6 +96,8 @@ button.wordmark:hover span { color: color-mix(in srgb, var(--accent) 80%, black)
 .level-tab[aria-selected="true"] { border-color: var(--ink); box-shadow: inset 0 -3px 0 var(--accent); }
 .level-tab[aria-selected="true"] .num { color: var(--accent); }
 .level-tab.done .state { color: var(--good); font-weight: 600; }
+.level-tab.locked { background: var(--bench); border-color: color-mix(in srgb, var(--line) 70%, transparent); cursor: not-allowed; }
+.level-tab.locked .num, .level-tab.locked .name, .level-tab.locked .state { color: #9aa5b1; }
 
 /* ---------------------------------------------------------------- layout */
 .lab {
@@ -2430,6 +2432,10 @@ const CELEBRATE = {"pics": [{"src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEU
   const TRACKS = [["physics", "Build CUDA Balls"], ["classic", "Classic examples"]];
   const trackOf = (i) => LEVELS[i].track;
   const trackLevels = (track) => LEVELS.map((L, i) => i).filter((i) => trackOf(i) === track);
+  // A level unlocks once every earlier level in its track is solved. The level on screen is never locked,
+  // so shared links (#level-3) still open directly.
+  const blockerOf = (i) => trackLevels(trackOf(i)).find((j) => j < i && !state.done[j]);
+  const isLocked = (i) => i !== state.level && !state.done[i] && blockerOf(i) !== undefined;
   function renderTabs() {
     const here = trackOf(state.level);
     const tracks = TRACKS.map(([id, name]) => {
@@ -2439,9 +2445,12 @@ const CELEBRATE = {"pics": [{"src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEU
     }).join("");
     const tabs = trackLevels(here).map((i) => {
       const L = LEVELS[i];
-      return `<button type="button" class="level-tab${state.done[i] ? " done" : ""}" role="tab" id="tab-${i}" aria-selected="${i === state.level}" data-level="${i}">` +
+      const locked = isLocked(i);
+      const need = locked ? `Solve level ${LEVELS[blockerOf(i)].number} first` : "";
+      return `<button type="button" class="level-tab${state.done[i] ? " done" : ""}${locked ? " locked" : ""}" role="tab" id="tab-${i}" aria-selected="${i === state.level}" data-level="${i}"` +
+        (locked ? ` aria-disabled="true" title="${need}"` : "") + `>` +
         `<span class="num">${L.number}</span><span class="name">${esc(L.title)}</span>` +
-        `<span class="state">${state.done[i] ? "Solved" : esc(L.concept)}</span></button>`;
+        `<span class="state">${state.done[i] ? "Solved" : locked ? need : esc(L.concept)}</span></button>`;
     }).join("");
     $("levels").innerHTML = `<div class="tracks" role="group" aria-label="Tracks">${tracks}</div>` +
       `<div class="tabs" role="tablist" aria-label="Levels">${tabs}</div>`;
@@ -3855,7 +3864,7 @@ const CELEBRATE = {"pics": [{"src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEU
   $("speed").addEventListener("change", (e) => { state.speed = e.target.value; });
   $("levels").addEventListener("click", (e) => {
     const tab = e.target.closest("[data-level]");
-    if (tab) { setLevel(Number(tab.dataset.level)); return; }
+    if (tab) { if (tab.getAttribute("aria-disabled") !== "true") setLevel(Number(tab.dataset.level)); return; }
     const track = e.target.closest("[data-track]");
     if (track && track.dataset.track !== trackOf(state.level)) {
       const all = trackLevels(track.dataset.track);
