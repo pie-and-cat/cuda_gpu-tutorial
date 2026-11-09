@@ -221,9 +221,21 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 /* ---------------------------------------------------------------- stage */
 .stage-head { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .stage-head h2 { margin: 0; }
-.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.controls label { font-size: 13px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
-.controls select { border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; background: white; }
+.stage-head .controls { flex: 1 1 auto; }
+.controls { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; }
+.controls-main, .controls-side { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.controls-side { position: relative; margin-left: auto; }
+.btn.quiet { background: transparent; border-color: transparent; color: var(--muted); }
+.btn.quiet:hover, .btn.quiet[aria-expanded="true"] { background: white; border-color: var(--line); color: var(--ink); }
+.settings-menu {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; width: 260px;
+  display: grid; gap: 12px; padding: 14px; background: white; border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: 0 16px 36px -18px rgba(22, 32, 42, .4);
+}
+.settings-menu[hidden] { display: none; }
+.setting { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13.5px; }
+.setting select { border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; background: white; font-size: 13.5px; }
+.setting input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); margin: 0; }
 .launch {
   background: var(--c-hat); color: #dfe8f3; border-radius: 10px; padding: 9px 12px; font: 500 12.5px/1.45 var(--font-code);
   overflow-x: auto; white-space: pre; margin-bottom: 10px;
@@ -529,14 +541,23 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
     <div class="stage-head">
       <h2>The GPU</h2>
       <div class="controls">
-        <button class="btn primary" type="button" id="btn-run">Run on GPU</button>
-        <button class="btn" type="button" id="btn-step">Step</button>
-        <button class="btn" type="button" id="btn-cpu">Run CPU loop</button>
-        <button class="btn" type="button" id="btn-reset">Reset</button>
-        <button class="btn" type="button" id="btn-sound" aria-pressed="true" title="Play a sound when a level is solved">Sound on</button>
-        <label for="speed">Speed
-          <select id="speed"><option value="slow">Slow</option><option value="normal" selected>Normal</option><option value="fast">Fast</option></select>
-        </label>
+        <div class="controls-main">
+          <button class="btn primary" type="button" id="btn-run">Run on GPU</button>
+          <button class="btn" type="button" id="btn-step">Step</button>
+          <button class="btn" type="button" id="btn-cpu" hidden>Compare with CPU</button>
+        </div>
+        <div class="controls-side">
+          <button class="btn quiet" type="button" id="btn-reset" hidden>Reset simulation</button>
+          <button class="btn quiet" type="button" id="btn-settings" aria-expanded="false" aria-controls="settings-menu">Settings</button>
+          <div class="settings-menu" id="settings-menu" role="group" aria-label="Settings" hidden>
+            <label class="setting" for="speed"><span>Animation speed</span>
+              <select id="speed"><option value="slow">Slow</option><option value="normal" selected>Normal</option><option value="fast">Fast</option></select>
+            </label>
+            <label class="setting" for="opt-sound"><span>Sound when a level is solved</span>
+              <input type="checkbox" id="opt-sound" checked>
+            </label>
+          </div>
+        </div>
       </div>
     </div>
     <div class="launch" id="launch"></div>
@@ -2416,6 +2437,7 @@ const CELEBRATE = {"pics": [{"src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEU
     selected: null,
     selectedBall: null, // a ball clicked on the canvas that no thread moves
     speed: "normal",
+    ranGpu: new Set(), // levels run on the GPU this session
   };
   const lv = () => LEVELS[state.level];
   const prog = () => state.programs[state.level];
@@ -2549,8 +2571,8 @@ const CELEBRATE = {"pics": [{"src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEU
       `<ol id="kernel-list" aria-label="${host ? "Host code" : "Kernel statements"}, run top to bottom">${items.join("")}</ol>` +
       (p.length ? "" : `<div class="empty-drop">Drop blocks here</div>`) +
       `<div class="cap">}</div></div></div>` +
-      `<div class="kernel-actions"><button class="btn" type="button" id="btn-clear">${host ? "Clear code" : "Clear kernel"}</button>` +
-      `<button class="btn" type="button" id="btn-restore">${host ? "Restore starting code" : "Restore starting kernel"}</button></div>`;
+      `<div class="kernel-actions"><button class="btn" type="button" id="btn-clear">Remove all blocks</button>` +
+      `<button class="btn" type="button" id="btn-restore">Reset code to starting version</button></div>`;
     markCurrentStatement();
   }
 
@@ -2743,6 +2765,7 @@ const CELEBRATE = {"pics": [{"src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEU
     stopTimer();
     runSerial++;
     const L = lv();
+    if (kind === "gpu") state.ranGpu.add(state.level); // reveals Compare with CPU for this level
     if (kind === "cpu" && isSim(L)) { // physics: a note on what one core would do, no animation
       state.run = { kind: "cpunote", data: { frames: [null] }, frame: 0, applied: true };
       renderStage();
@@ -2845,11 +2868,11 @@ const CELEBRATE = {"pics": [{"src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEU
     else if (r && r.kind === "gpu" && !atEnd()) run.textContent = "Resume";
     else run.textContent = L.kind === "host" ? "Run" : "Run on GPU";
     const cpu = $("btn-cpu");
-    cpu.textContent = state.playing && r && r.kind === "cpu" ? "Running CPU loop…" : "Run CPU loop";
-    cpu.disabled = L.kind === "host";
-    cpu.title = L.kind === "host" ? "This level is CPU code already" : "";
+    cpu.textContent = state.playing && r && r.kind === "cpu" ? "Running CPU loop…" : "Compare with CPU";
+    // Comparison only makes sense once there is a GPU run to compare with; the host level is CPU code already.
+    cpu.hidden = L.kind === "host" || !(state.ranGpu.has(state.level) || state.done[state.level]);
     $("btn-step").title = isSim(L) ? "Advance one frame (1/60 of a second)" : "Run one block of the kernel";
-    $("btn-reset").disabled = !r;
+    $("btn-reset").hidden = !r;
   }
 
   function renderTicker() {
@@ -3479,9 +3502,7 @@ const CELEBRATE = {"pics": [{"src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEU
   let soundOn = true;
   try { soundOn = localStorage.getItem(SOUND_KEY) !== "off"; } catch (e) { /* storage unavailable */ }
   const showSoundButton = () => {
-    const b = $("btn-sound");
-    b.textContent = soundOn ? "Sound on" : "Sound off";
-    b.setAttribute("aria-pressed", String(soundOn));
+    $("opt-sound").checked = soundOn;
   };
   const yippee = new Audio(CELEBRATE.sound);
   yippee.preload = "auto";
@@ -3874,14 +3895,31 @@ const CELEBRATE = {"pics": [{"src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEU
     if (state.playing && state.run?.kind === "cpu") return;
     startRun("cpu", false);
   });
-  $("btn-reset").addEventListener("click", resetRun);
-  $("btn-sound").addEventListener("click", () => {
-    soundOn = !soundOn;
+  $("btn-reset").addEventListener("click", () => {
+    resetRun();
+    $("btn-run").focus(); // the reset button hides itself once there is nothing to reset
+  });
+  $("opt-sound").addEventListener("change", (e) => {
+    soundOn = e.target.checked;
     try { localStorage.setItem(SOUND_KEY, soundOn ? "on" : "off"); } catch (e) { /* storage unavailable */ }
-    showSoundButton();
   });
   showSoundButton();
   $("speed").addEventListener("change", (e) => { state.speed = e.target.value; });
+  // Settings menu: a disclosure that closes on Escape or a click outside it.
+  function setSettingsOpen(open, returnFocus) {
+    $("settings-menu").hidden = !open;
+    $("btn-settings").setAttribute("aria-expanded", String(open));
+    if (open) $("speed").focus();
+    else if (returnFocus) $("btn-settings").focus();
+  }
+  $("btn-settings").addEventListener("click", () => setSettingsOpen($("settings-menu").hidden));
+  $("settings-menu").addEventListener("keydown", (e) => { if (e.key === "Escape") { e.preventDefault(); setSettingsOpen(false, true); } });
+  document.addEventListener("pointerdown", (e) => {
+    if (!$("settings-menu").hidden && !e.target.closest(".controls-side")) setSettingsOpen(false);
+  });
+  document.addEventListener("focusin", (e) => {
+    if (!$("settings-menu").hidden && !e.target.closest(".controls-side")) setSettingsOpen(false);
+  });
   $("levels").addEventListener("click", (e) => {
     const tab = e.target.closest("[data-level]");
     if (tab) { if (tab.getAttribute("aria-disabled") !== "true") setLevel(Number(tab.dataset.level)); return; }
@@ -3966,8 +4004,8 @@ const CELEBRATE = {"pics": [{"src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEU
       text: () => "Statements run top to bottom. Reorder them with the arrows, pick values from the dropdowns, and drag a block back to Blocks to remove it." },
     { target: "#stage .stage-head", step: "Step 3", title: "Run it",
       text: () => isSim(lv())
-        ? "Run on GPU plays the whole simulation. Step advances one frame at a time so you can follow what happens."
-        : "Run on GPU plays the whole kernel. Step runs one statement at a time so you can follow every thread." },
+        ? `Run on GPU plays the whole simulation. Step advances one frame at a time so you can follow what happens.${lv().kind === "host" ? "" : " After your first run, Compare with CPU shows what one core would do."}`
+        : "Run on GPU plays the whole kernel. Step runs one statement at a time so you can follow every thread. After your first run, Compare with CPU shows how long one core would take." },
     { target: "#viz", step: "Step 4", title: "Inspect the result",
       text: () => "Watch the threads and memory change. Click a thread to see its own variables, then read the verdict below to find out what to fix.", next: "Start building" },
   ];
