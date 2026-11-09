@@ -3980,6 +3980,9 @@ const CELEBRATE = {"pics": [{"src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEU
   tourCard.hidden = true;
   document.body.appendChild(tourCard);
   let tourIndex = -1;
+  // The walkthrough plays only once per browser; finishing or skipping it marks it as seen.
+  const TOUR_KEY = "threadlab-tour-seen";
+  const tourSeen = () => { try { return localStorage.getItem(TOUR_KEY) === "1"; } catch (e) { return false; } };
 
   function clearSpot() {
     document.querySelectorAll(".tour-dim").forEach((n) => n.classList.remove("tour-dim"));
@@ -4032,12 +4035,14 @@ const CELEBRATE = {"pics": [{"src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEU
     tourCard.querySelector('[data-tour="next"]').focus({ preventScroll: true });
   }
   function startTour() {
+    if (tourSeen()) return;
     stopTimer();
     backdrop().forEach((n) => { n.inert = true; });
     // let the splash fade and the new level render before measuring positions
     setTimeout(() => showTourStep(0), matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 280);
   }
   function endTour() {
+    try { localStorage.setItem(TOUR_KEY, "1"); } catch (e) { /* storage unavailable */ }
     tourIndex = -1;
     clearSpot();
     tourCard.hidden = true;
