@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Thread Lab is a self-contained static site with no dependencies to install.
+exit 0
