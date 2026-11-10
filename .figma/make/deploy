@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BUILD_DIR=".figma/make/dist"
+rm -rf "$BUILD_DIR"
+mkdir -p "$BUILD_DIR"
+cp -R thread-lab/. "$BUILD_DIR/"
+
+[[ -f "$BUILD_DIR/index.html" ]] || {
+  echo "Expected build output at $BUILD_DIR" >&2
+  exit 1
+}
+
+figma make deploy --build-dir "$BUILD_DIR"

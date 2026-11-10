@@ -1,0 +1,10 @@
+{
+  "description": "Thread Lab is an interactive, block-based browser game for learning CUDA thread indexing, memory, synchronization, and parallel GPU programming.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
