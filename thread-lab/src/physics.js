@@ -13,6 +13,7 @@
 // Level 4 simulates the frame loop with two GPU buffers, the CPU's copy and the screen.
 // Level 5 is an ordinary Thread Lab level run by the engine, fed with the balls' energies.
 const Physics = (() => {
+  const TEXT = typeof LEVEL_TEXT !== "undefined" ? LEVEL_TEXT : require("./level-text.js");
   const E = typeof Engine !== "undefined" ? Engine : require("./engine.js");
 
   // Same constants as cuda_balls/src/physics.cu, minus friction and the third dimension.
@@ -466,13 +467,14 @@ const Physics = (() => {
   }
 
   function judgeKernel(level, program, res, rerun) {
-    if (!program.length) return fail("The kernel is empty", "Drag blocks from the palette into the kernel, then press Run on GPU.");
+    const MSG = TEXT.kernelMessages({ text, N, PHYS, ballList });
+    if (!program.length) return fail(...MSG.kernelEmpty());
     if (program.filter((s) => INDEX_TYPES.includes(s.type)).length > 1)
-      return fail("Two blocks set i", "Keep one of the int i = … blocks.");
+      return fail(...MSG.twoIndexBlocks());
     const seen = new Set();
     for (const s of program) {
       if (seen.has(s.type))
-        return fail(`${text(s.type)} is in the kernel twice`, "Each step happens once per substep. Remove the extra copy.");
+        return fail(...MSG.blockTwice({ s }));
       seen.add(s.type);
     }
     const L = (id) => E.threadLabel(level, res.firstThreads[id]);
@@ -481,58 +483,42 @@ const Physics = (() => {
       const f = res.faults[0];
       if (f.info.kind === "undef") {
         const setter = { i: "int i = …", p: LOAD, v: LOAD, f: FORCE_SETTER }[f.info.name];
-        return fail(`Every thread used ${f.info.name} before setting it`,
-          `Put ${setter} above the first block that uses ${f.info.name}.`, { who: res.faults.map((x) => x.thread) });
+        return fail(...MSG.usedBeforeSet({ f, setter }), { who: res.faults.map((x) => x.thread) });
       }
       const oob = res.faults.filter((x) => x.info.kind === "oob");
       const guardAt = at(program, "guard");
-      const hint = guardAt === -1
-        ? `There are ${N} balls but ${PHYS.blocks * PHYS.threads} threads. Add if (i >= n) return; right after computing i.`
-        : "The bounds check comes too late: move it above the block that reads pos.";
-      return fail(`${oob.length} thread${oob.length > 1 ? "s" : ""} went outside the data`,
-        `For example ${L(oob[0].thread)} ${oob[0].message}. ${hint}`, { who: oob.map((x) => x.thread) });
+      const why = guardAt === -1 ? "noGuard" : "guardTooLate"; // which hint the message gives
+      return fail(...MSG.outsideTheData({ oob, L, why }), { who: oob.map((x) => x.thread) });
     }
 
     if (res.nothingStored)
-      return fail("Nothing was stored", level.nothingStored);
+      return fail(...MSG.nothingStored({ level }));
 
     if (level.checks.coverage) {
       const missing = [], extra = [];
       res.movers.forEach((m, i) => (m === 0 ? missing : m > 1 ? extra : []).push(i));
       if (missing.length || extra.length) {
         const times = extra.length ? res.movers[extra[0]] : 0;
-        const title = missing.length ? `Ball${missing.length > 1 ? "s" : ""} ${ballList(missing)} never moved` : `Ball${extra.length > 1 ? "s" : ""} ${ballList(extra)} moved too fast`;
-        let msg = extra.length ? `Balls ${ballList(extra)} were each moved by ${times} threads, so they went ${times} times too fast. ` : "";
-        msg += has(program, "idx_tid")
-          ? "i = threadIdx.x starts again at 0 in every block. Use the int i = … block with blockIdx.x * blockDim.x + threadIdx.x, so thread t of block b moves ball b × 8 + t."
-          : "Check the formula: thread t of block b should move ball b × 8 + t.";
-        return fail(title, msg, { balls: missing.length ? missing : extra });
+        return fail(...MSG.coverage({ missing, extra, times, usesThreadIdxOnly: has(program, "idx_tid") }),
+          { balls: missing.length ? missing : extra });
       }
     }
 
     const iv = at(program, "velocity"), ip = at(program, "position");
     if (level.checks.escape && res.escaped) {
       const b = res.escaped.ball;
-      let hint;
-      if (iv === -1) hint = "Nothing applies the forces to the velocity: add v += f / mass[i] * dt; after the force blocks.";
-      else if (!has(program, "walls")) hint = "Nothing stops a ball at the floor and walls: add f += pushFromWalls(i, p, v); before v is updated.";
-      else hint = "pushFromWalls runs after v += …, so its force is never used. Move it above the velocity update.";
-      return fail(`Ball ${b} left the box`, hint, { who: [b] });
+      const why = iv === -1 ? "noVelocityUpdate" : !has(program, "walls") ? "noWalls" : "wallsTooLate"; // which hint the message gives
+      return fail(...MSG.ballLeftBox({ b, why }), { who: [b] });
     }
 
     if (level.checks.frozen && res.moved < 0.05) {
-      return fail("The balls never move", ip === -1
-        ? "The velocity changes but nothing moves the ball: add p += v * dt; after the velocity update."
-        : "The store runs before p changes, so it saves the old position. Put the store last.");
+      return fail(...MSG.ballsNeverMove({ ip }));
     }
 
     if (level.checks.overlap && res.maxOverlap > PHYS.overlapLimit) {
       const [a, b] = res.overlapPair;
-      const hint = !has(program, "collide")
-        ? "Nothing pushes balls apart: add the for (j …) f += push(i, j); loop before v is updated."
-        : "push(i, j) runs after v += …, so its force is never used. Move the loop above the velocity update.";
-      return fail(`Balls ${a} and ${b} passed through each other`,
-        `They overlapped by ${res.maxOverlap.toFixed(2)} units. ${hint}`, { who: [a, b] });
+      const why = !has(program, "collide") ? "noCollide" : "collideTooLate"; // which hint the message gives
+      return fail(...MSG.ballsOverlap({ a, b, res, why }), { who: [a, b] });
     }
 
     if (level.checks.race && res.races) {
@@ -543,12 +529,7 @@ const Physics = (() => {
       let div = 0;
       for (let i = 0; i < N; i++)
         div = Math.max(div, Math.hypot(res.frames[last][4 * i] - other.frames[last][4 * i], res.frames[last][4 * i + 1] - other.frames[last][4 * i + 1]));
-      const writerText = writer >= 0 ? `${L(writer)} had already overwritten it` : "its thread had already overwritten it";
-      return fail("A race: the result depends on which block runs first",
-        `${L(r0.thread)} (ball ${r0.ball}) read pos[${r0.j}] after ${writerText} with ball ${r0.j}'s next position, so the two balls were one substep apart. ` +
-        `Run again with the blocks in the opposite order (dashed rings), the balls end up as much as ${div.toFixed(2)} units apart. ` +
-        "Write to nextPos and nextVel instead; the host swaps the buffers after each launch.",
-        { who: [r0.thread], ghost: other.frames, divergence: div });
+      return fail(...MSG.raceInPlace({ L, r0, writer, div }), { who: [r0.thread], ghost: other.frames, divergence: div });
     }
 
     return pass(level.passTitle, level.passText(stepCounts(program)));
@@ -615,54 +596,40 @@ const Physics = (() => {
   }
 
   function judgeHost(res) {
+    const MSG = TEXT.hostMessages({ PHYS });
     const { counts: c, loopOps, frameOps, advance, lag } = res;
     const sec = (n) => (n * PHYS.fps).toLocaleString("en-US");
     if (!loopOps.length && !frameOps.length)
-      return fail("The frame function is empty", "Drag blocks into it. Blocks above the } run 16 times per frame; blocks below it run once.");
-    if (!c.launch) return fail("Nothing runs the simulation", "Add the stepKernel<<<3, 8>>> launch inside the loop.");
+      return fail(...MSG.frameEmpty());
+    if (!c.launch) return fail(...MSG.nothingRunsSimulation());
     if (res.firstGarbage !== null)
-      return fail("The balls turned into garbage",
-        "A swap makes pos point at the nextPos buffer before any kernel has written it, so the GPU reads uninitialized memory. Inside the loop, launch first, then swap.");
-    if (!c.draw) return fail("Nothing is drawn", "Add draw(hostPos); below the }, so each frame ends with a picture.");
+      return fail(...MSG.garbage());
+    if (!c.draw) return fail(...MSG.nothingDrawn());
     if (c.draw >= PHYS.substeps)
-      return fail(`Drawing ${sec(c.draw)} times a second`,
-        "draw is inside the loop, so it runs after every substep, but the screen shows only one picture per frame. Move it below the }.");
+      return fail(...MSG.drawTooOften({ sec, c }));
     if (c.upload)
       return res.rewound
-        ? fail("The simulation keeps rewinding",
-          "cudaMemcpy(pos, hostPos, …, cudaMemcpyHostToDevice) overwrites the GPU's newer positions with the CPU's older copy. The balls live on the GPU; the CPU needs a copy only to draw. Remove the upload.")
-        : fail(`${sec(c.upload)} copies a second to the GPU, for nothing`,
-          "The upload sends positions the GPU already has. Every cudaMemcpy crosses the PCIe bus and waits for the GPU to finish. Remove it.");
+        ? fail(...MSG.keepsRewinding())
+        : fail(...MSG.uselessUpload({ sec, c }));
     if (!c.copyBack)
-      return fail("The picture never changes",
-        "The GPU is simulating, but draw shows hostPos, the CPU's copy from before the first frame. After the loop, copy pos back: cudaMemcpy(hostPos, pos, bytes, cudaMemcpyDeviceToHost);");
+      return fail(...MSG.pictureNeverChanges());
     if (c.copyBack >= PHYS.substeps)
-      return fail(`Copying ${sec(c.copyBack)} times a second`,
-        "The copy is inside the loop, so it runs after every substep, and each cudaMemcpy makes the CPU wait for the GPU. Only the last copy reaches the screen. Move it below the }.");
+      return fail(...MSG.copyTooOften({ sec, c }));
     if (!advance)
-      return fail("The balls never move", c.swap
-        ? "Each launch must be followed by exactly one swap, so the next launch starts from its result. Put the launch, then the swap, inside the loop."
-        : "Every launch reads pos and writes nextPos, but nothing swaps them, so each launch starts from the same positions. Add swap(pos, nextPos); swap(vel, nextVel); right after the launch.");
+      return fail(...MSG.ballsNeverMove({ c }));
     if (advance < PHYS.substeps) {
       const launchInLoop = loopOps.includes("launch");
-      return fail(`Slow motion: ${advance === 1 ? "16" : (PHYS.substeps / advance).toFixed(1)} times slower than real time`, launchInLoop
-        ? "The swap runs once per frame, so all 16 launches read the same positions and compute the same substep. Move the swap inside the loop, right after the launch."
-        : "The launch is below the }, so it runs once per frame: 60 substeps a second instead of 960. Move the launch and the swap inside the loop.");
+      return fail(...MSG.slowMotion({ advance, launchInLoop }));
     }
     if (advance > PHYS.substeps)
-      return fail(`Fast forward: ${(advance / PHYS.substeps).toFixed(0)} times faster than real time`,
-        "The loop runs more than one launch and swap per substep. Keep one launch and one swap inside the loop.");
+      return fail(...MSG.fastForward({ advance }));
     if (c.launch > advance)
-      return fail(`${sec(c.launch - advance)} launches a second are wasted`,
-        "An extra launch recomputes a substep that is already done, because pos has not been swapped yet. Keep one launch per substep.");
+      return fail(...MSG.wastedLaunches({ sec, c, advance }));
     if (c.copyBack > 1 || c.draw > 1)
-      return fail("Extra work every frame", "Below the loop you need one copy and one draw per frame. Remove the duplicates.");
+      return fail(...MSG.extraWork());
     if (lag)
-      return fail("Always one frame behind",
-        "draw runs before the copy, so each frame shows the positions copied in the frame before: 16 substeps old. Copy first, then draw.");
-    return pass("Real time, with one copy per frame",
-      "Every frame: 16 launches and swaps on the GPU, then one copy of the 22 positions to the CPU and one draw. That is 960 launches but only 60 copies a second, because the balls stay on the GPU the whole time. " +
-      "Swapping two pointers costs nothing; no data moves. This is the loop in CUDA Balls: physicsStep, then physicsRead.");
+      return fail(...MSG.oneFrameBehind());
+    return pass(...MSG.passRealTime());
   }
 
   // ---------------------------------------------------------------- level 5: total energy
@@ -706,71 +673,42 @@ const Physics = (() => {
     ...kernelCommon,
     id: "balls-move",
     number: 1,
-    title: "Move the Balls",
+    ...TEXT.get("balls-move"),
     frames: 120,
     startState: DRIFT,
     checks: { coverage: true },
     kernelHeader: ["__global__ void stepKernel(float2* pos,", "    const float2* vel, int n) {"],
     launch: "stepKernel<<<3, 8>>>(pos, vel, 22);   // 960 launches a second",
-    mission: "Your first task- give each ball a thread to move it. You have three variables to work with, blockIdx.x, threadIdx.x and blockDim.x. A free hint for the first one: blockIdx.x * blockDim.x + threadIdx.x.",
-    hint: "There are extra threads. How do you make them return early?",
-    dataNote: "pos[i] and vel[i] are ball i's position and velocity. Just make them drift!",
-    nothingStored: "No thread moved its ball. Add pos[i] += vel[i] * dt;",
     palette: ["idx_tid", "idx_i", "guard", "drift"],
     start: ["idx_tid", "drift"].map((type) => ({ type })),
-    passTitle: "Every ball has exactly one thread",
-    passText: (sc) =>
-      `Thread t of block b moved ball b × 8 + t, and the 2 spare threads returned early. The GPU was faster than the CPU, with the GPU having ${sc.gpu} steps per substep compared to the CPU's ${sc.cpu} steps per substep.
-      Congratulations!` ,
   };
 
   const gravityLevel = {
     ...kernelCommon,
     id: "balls-gravity",
     number: 2,
-    title: "Gravity and walls",
-    concept: "Each thread's own variables",
+    ...TEXT.get("balls-gravity"),
     frames: 180,
     startState: START,
     checks: { escape: true, frozen: true },
     kernelHeader: STEP_HEADER,
     launch: "stepKernel<<<3, 8>>>(pos, vel, nextPos, nextVel, 22);   // 960 launches a second",
-    mission:
-      "Now make the balls fall and bounce. Each thread copies its ball into its own variables p and v, works out the force f on it, updates v and then p, and stores them back. The starting kernel has a block in the wrong place, and no walls.",
-    hint: "One thread runs its statements top to bottom: load, force, walls, v += …, p += …, then store. A store that runs before p changes saves the old position.",
-    dataNote: "p, v and f belong to each thread; no other thread sees them. The balls still pass through each other: collisions come next.",
-    nothingStored: "Every thread works out its ball's new p and v, then throws them away. Add the block that stores them.",
     palette: ["idx", "guard", "load", "forces", "walls", "velocity", "position", "storeInPlace"],
     start: ["idx", "guard", "load", "forces", "velocity", "storeInPlace", "position"].map((type) => ({ type })),
-    passTitle: "The balls fall and bounce",
-    passText: (sc) =>
-      `Each thread kept its ball in its own variables, and the kernel ran 960 times a second, each launch starting from the last one's result. ${sc.gpu} steps per substep on the GPU, ${sc.cpu} on one CPU core. ` +
-      "The balls still pass through each other, because each thread looks only at its own ball. Next: collisions.",
   };
 
   const collideLevel = {
     ...kernelCommon,
     id: "balls-collide",
     number: 3,
-    title: "Collisions",
-    concept: "Double buffering",
+    ...TEXT.get("balls-collide", { N }),
     frames: PHYS.frames,
     startState: START,
     checks: { escape: true, frozen: true, overlap: true, race: true },
     kernelHeader: ["__constant__ float radius[22];", "__constant__ float mass[22];", ...STEP_HEADER],
     launch: "stepKernel<<<3, 8>>>(pos, vel, nextPos, nextVel, 22);   // 960 launches a second",
-    mission:
-      "Make the balls push each other apart. Each thread now has to look at every other ball, which brings a new problem: threads read positions that other threads are overwriting. Fix it so the result is the same whichever block the GPU runs first.",
-    hint: "Add the for (j …) push loop above v += …. Then the race: no thread may overwrite pos while other threads still read it, so store into nextPos and nextVel instead.",
-    dataNote: "If your kernel writes back into pos and vel, the host skips its usual swap. With nextPos and nextVel, the host swaps the two buffers after every launch.",
-    nothingStored: "Every thread works out its ball's new p and v, then throws them away. Add the block that stores them.",
     palette: ["idx", "guard", "load", "forces", "collide", "walls", "velocity", "position", "store", "storeInPlace"],
     start: ["idx", "guard", "load", "forces", "walls", "velocity", "position", "storeInPlace"].map((type) => ({ type })),
-    passTitle: "The balls bounce, stack and stay in the box",
-    passText: (sc) =>
-      "Each of the 22 balls had its own thread, and every thread read only the old positions, so the result is the same in any block order. " +
-      `One substep took ${sc.gpu} steps on the GPU; one CPU core would need ${N} × ${sc.perBall} = ${sc.cpu}. ` +
-      "At 22 balls a real CPU still keeps up; run cuda_balls --bench to see where your GPU pulls ahead.",
   };
 
   const hostLevel = {
@@ -778,21 +716,13 @@ const Physics = (() => {
     kind: "host",
     track: "physics",
     number: 4,
-    title: "The time loop",
-    concept: "Host code and copies",
-    editorTitle: "Your host code",
+    ...TEXT.get("balls-loop"),
     kernelHeader: [
       "// CPU code, once per screen frame",
       "void frame() {",
       "  for (int s = 0; s < 16; ++s) {",
     ],
     launch: "frame();   // the display calls this 60 times a second",
-    mission:
-      "The kernel from level 3 is done. Now write the CPU code that drives it: each screen frame must run 16 substeps on the GPU, then bring the positions back and draw them. The starting code runs, but the picture never changes. Make the balls move in real time, without copying more than you need.",
-    hint:
-      "Inside the loop: launch, then swap. Below the }: copy pos to the CPU, then draw. The GPU keeps its own copy of the balls, so nothing needs to go back to it.",
-    dataNote:
-      "At the start, pos holds the balls and nextPos is uninitialized. Blocks above the } run 16 times per frame; blocks below it run once.",
     model: MODEL_HOST,
     catNames: { physics: "GPU work", host: "CPU side" },
     catOrder: ["physics", "host", "memory"],
@@ -805,8 +735,7 @@ const Physics = (() => {
     id: "balls-energy",
     track: "physics",
     number: 5,
-    title: "Total energy",
-    concept: "Race conditions and atomics",
+    ...TEXT.get("balls-energy", { ENERGY_TOTAL }),
     dims: 1,
     grid: { x: PHYS.blocks, y: 1 },
     block: { x: PHYS.threads, y: 1 },
@@ -817,10 +746,6 @@ const Physics = (() => {
     kernelHeader: ["__device__ float total = 0;", "__global__ void totalEnergy(", "    const float2* pos, const float2* vel,", "    int n) {"],
     launch: "totalEnergy<<<3, 8>>>(pos, vel, 22);   // once per frame",
     cpuCode: "for (int i = 0; i < 22; ++i) total += energy(i);",
-    mission:
-      "Is the simulation losing energy, as real bouncing balls do? Each thread works out its ball's energy and adds it to one shared total. The kernel runs, but the total is far too small. Run it, find out why, and fix it.",
-    hint: "total += … is really three steps: read total, add, write total back. What happens when 22 threads read total at the same moment?",
-    dataNote: `energy(i) = ½ m v² + m g y for ball i, one second into the simulation, rounded. The right total is ${ENERGY_TOTAL}.`,
     palette: ["idx_fixed", "guard", "race", "atomic"],
     start: ["idx_fixed", "guard", "race"].map((type) => ({ type })),
     blocks: {
@@ -846,9 +771,6 @@ const Physics = (() => {
     memory: () => ({ x: { data: ENERGY_X }, total: { data: [0] } }),
     expectedTotal: ENERGY_TOTAL,
     cpuSteps: N,
-    passText: (res, diag) =>
-      `The ${diag.atomics} atomicAdd calls had to take turns, so this took ${res.steps} steps, about as many as the CPU loop. That is fine for 22 balls; for millions, a tree of partial sums in shared memory is faster (the classic track's last level). ` +
-      "The chart below runs your kernel on every frame: the total falls as collisions and air drag turn motion into heat. CUDA Balls checks the same thing in --selftest.",
   };
 
   // ---------------------------------------------------------------- level 6: pie the professor
@@ -948,50 +870,37 @@ const Physics = (() => {
   }
 
   function judgeSweep(res) {
+    const MSG = TEXT.sweepMessages({ sweepBlocks, PIE });
     const { loopOps: L, afterOps: A, hitters } = res;
     const where = (op) => (L.includes(op) ? "loop" : A.includes(op) ? "after" : null);
     const T = PIE.throws;
-    if (!L.length && !A.length) return fail("The kernel is empty", "Drag blocks into it. Blocks above the } run once per step of the flight; blocks below it run once, after the flight.");
+    if (!L.length && !A.length) return fail(...MSG.kernelEmpty());
     for (const op of new Set([...L, ...A]))
       if ([...L, ...A].filter((o) => o === op).length > 1)
-        return fail(`${sweepBlocks[op].parts.join("").replace(/\s+/g, " ")} is in the kernel twice`, "Each step of a throw happens once. Remove the extra copy.");
+        return fail(...MSG.blockTwice({ op }));
     if (where("fly") !== "loop")
-      return fail("The pies never leave the launcher", where("fly")
-        ? "p += v * dt is below the }, so it runs once, after the flight. Move it inside the loop."
-        : "Nothing moves the pies. Add p += v * dt; inside the loop.");
+      return fail(...MSG.neverLeaveLauncher({ where }));
     if (where("gravity") !== "loop")
-      return fail("The pies fly in straight lines", where("gravity")
-        ? "v.y -= g * dt is below the }, so gravity acts once, after the flight is over. Move it inside the loop."
-        : "Nothing pulls the pies down, so every throw sails over the professor. Add v.y -= g * dt; inside the loop.");
+      return fail(...MSG.straightLines({ where }));
     if (where("hitCheck") === "after")
-      return fail("The hit check is outside the loop",
-        "Below the }, break has no loop to leave, and the check would only look at where each pie ended up. Move it inside the loop.");
+      return fail(...MSG.hitCheckOutside());
     if (!where("hitCheck"))
-      return fail("Pies fly straight through the professor",
-        "Nothing checks for a hit, so no thread ever sets hit. Add the hitsFace(p) check inside the loop.");
+      return fail(...MSG.noHitCheck());
     if (!where("recordRace") && !where("recordAtomic"))
-      return fail("Nobody wrote down the answer",
-        `${hitters.length} throws hit the face, but the kernel never records one. Below the }, add the block that keeps the gentlest hit.`);
+      return fail(...MSG.noRecord({ hitters }));
     if (where("recordRace") === "loop" || where("recordAtomic") === "loop")
-      return fail("gentlest is still 20: nothing was recorded",
-        "The record is inside the loop, but a thread that hits leaves the loop at break, so it never reaches the record. Move it below the }.");
-    if (!hitters.length) return fail("No pie hit the face", "Check that gravity and the move both run inside the loop.");
+      return fail(...MSG.recordInsideLoop());
+    if (!hitters.length) return fail(...MSG.noHit());
     const truth = res.truth;
     const range = hitters.length > 2 ? `${hitters[0]}–${hitters.at(-1)}` : hitters.join(" and ");
     if (where("recordRace") && where("recordAtomic"))
-      return fail("Two records", "Keep only the atomicMin block: the plain compare-and-write is the race you are replacing.");
+      return fail(...MSG.twoRecords());
     if (where("recordRace") && res.gentlest !== truth)
-      return fail(`gentlest = ${res.gentlest}, but throw ${truth} is gentler: a race`,
-        `Throws ${range} all hit. Each of those threads compared its i with gentlest = ${T} at the same moment, so all ${res.racers.length} wrote, and the last write, throw ${res.gentlest}, survived. ` +
-        "atomicMin compares and writes in one indivisible step: use if (hit) atomicMin(&gentlest, i);");
+      return fail(...MSG.raceLost({ res, truth, range, T }));
     if (where("recordRace"))
-      return fail("Right answer, by luck", "Only one thread wrote this time. Use atomicMin so the answer stays right however many throws hit.");
+      return fail(...MSG.luckyRace());
     const before = res.throws[truth - 1];
-    const slower = before ? ` Throw ${truth - 1}, at ${before.speed.toFixed(2)} m/s, lands on the ${before.stop ? before.stop.kind : "floor"} instead.` : "";
-    return pass(`Splat! Throw ${truth} is the gentlest that lands`,
-      `It leaves the launcher at ${res.throws[truth].speed.toFixed(2)} m/s.${slower} ` +
-      `Every thread flew a whole 1.5-second throw, ${PIE.steps.toLocaleString("en-US")} steps, inside a single launch, with no copies until the answer. ` +
-      `Trying many independent inputs at once is called a parameter sweep, one of the easiest ways to put a GPU to work. One CPU core would fly the throws one after another: ${T} × ${PIE.steps.toLocaleString("en-US")} = ${(T * PIE.steps).toLocaleString("en-US")} steps.`);
+    return pass(...MSG.passSplat({ truth, res, before, T }));
   }
 
   const pieLevel = {
@@ -999,8 +908,7 @@ const Physics = (() => {
     kind: "sweep",
     track: "physics",
     number: 6,
-    title: "Pie the professor",
-    concept: "A parameter sweep",
+    ...TEXT.get("balls-pie"),
     dims: 1,
     grid: { x: PHYS.blocks, y: 1 },
     block: { x: PHYS.threads, y: 1 },
@@ -1018,12 +926,6 @@ const Physics = (() => {
       "  for (int s = 0; s < 1440; ++s) {",
     ],
     launch: "throwPies<<<3, 8>>>(speed, 20);   // 20 throws, one launch",
-    mission:
-      "Finale: the department's charity fundraiser, where a volunteer professor takes a pie to the face. Twenty pies are ready, thrown from soft to fast, and each thread flies one whole throw. Find the gentlest throw that still lands on the face. The starting kernel has no gravity, and its record of the answer is not safe.",
-    hint:
-      "Inside the loop: gravity, then the move, then the hit check. Below the }: record the gentlest hit. Several threads hit at once, so the compare and the write must happen in one step.",
-    dataNote:
-      "Throw i leaves the launcher at 9.25 + 0.25 × i m/s, always at 35°. The flight is simulated for 1.5 seconds in steps of 1/960 s. Blocks above the } run every step; blocks below it run once.",
     model: [
       "Each thread flies one throw from start to finish, so one kernel launch covers the whole 1.5 seconds.",
       "The throws never touch each other, so threads share nothing until they record the answer.",

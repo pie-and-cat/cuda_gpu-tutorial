@@ -9,6 +9,7 @@
 // - atomicAdd calls take turns: each one is its own step, and is visible at once.
 // - Reading or writing outside an array faults that thread (it stops).
 const Engine = (() => {
+  const TEXT = typeof LEVEL_TEXT !== "undefined" ? LEVEL_TEXT : require("./level-text.js");
   class ThreadFault extends Error {
     constructor(message, info) {
       super(message);
@@ -179,8 +180,7 @@ const Engine = (() => {
     {
       id: "vector-add",
       number: 1,
-      title: "One thread per element",
-      concept: "Thread indexing",
+      ...TEXT.get("vector-add"),
       dims: 1,
       grid: { x: 4, y: 1 },
       block: { x: 8, y: 1 },
@@ -188,10 +188,6 @@ const Engine = (() => {
       kernelHeader: ["__global__ void vectorAdd(const int* a, const int* b, int* c, int n) {"],
       launch: "vectorAdd<<<4, 8>>>(a, b, c, 28);   // 4 blocks × 8 threads = 32 threads",
       cpuCode: "for (int i = 0; i < 28; ++i) c[i] = a[i] + b[i];",
-      mission:
-        "Add two 28-element arrays with 32 threads. Each thread must work out its own element i, stay inside the arrays, and write c[i] = a[i] + b[i].",
-      hint: "Thread 3 of block 2 should get i = 19, because 2 × 8 + 3 = 19. The last 4 threads have no element to work on.",
-      dataNote: "a holds the first digits of π, b the first digits of e.",
       palette: ["idx_i", "idx_tid", "guard", "add", "mul"],
       start: [{ type: "add" }],
       blocks: {
@@ -228,8 +224,7 @@ const Engine = (() => {
     {
       id: "image-blur",
       number: 2,
-      title: "One thread per pixel",
-      concept: "2-D grids",
+      ...TEXT.get("image-blur"),
       dims: 2,
       grid: { x: 4, y: 3 },
       block: { x: 4, y: 4 },
@@ -246,10 +241,6 @@ const Engine = (() => {
       ],
       launch: "blur<<<dim3(4, 3), dim3(4, 4)>>>(in, out, 14, 10);   // 12 blocks × 16 threads = 192 threads",
       cpuCode: "for (int y = 0; y < 10; ++y) for (int x = 0; x < 14; ++x) out[y][x] = blur_pixel(in, w, h, x, y);",
-      mission:
-        "Blur a 14 × 10 image with one thread per pixel. The grid is 4 × 3 blocks of 4 × 4 threads, which is 16 × 12 threads, so some threads fall off the right and bottom edges.",
-      hint: "x comes from the .x variables and y from the .y variables. Threads with x ≥ 14 or y ≥ 10 have no pixel.",
-      dataNote: "blur_pixel returns the rounded average of the 3 × 3 input pixels around (x, y), the same function as in the tutorial's image_blur.cu.",
       palette: ["idx_x", "idx_y", "guard2", "blur", "copy", "blurT"],
       start: [{ type: "idx_x" }, { type: "idx_y" }],
       blocks: {
@@ -301,8 +292,7 @@ const Engine = (() => {
       id: "race",
       number: 3,
       atomicLesson: true,
-      title: "Race to the total",
-      concept: "Race conditions and atomics",
+      ...TEXT.get("race", { sum16 }),
       dims: 1,
       grid: { x: 2, y: 1 },
       block: { x: 8, y: 1 },
@@ -310,10 +300,6 @@ const Engine = (() => {
       kernelHeader: ["__device__ int total = 0;", "__global__ void sum(const int* x, int n) {"],
       launch: "sum<<<2, 8>>>(x, 16);   // 2 blocks × 8 threads = 16 threads",
       cpuCode: "for (int i = 0; i < 16; ++i) total += x[i];",
-      mission:
-        "Sixteen threads each add one number to a shared total. The kernel on the left compiles and runs, but its answer is wrong. Run it, find out why, and fix it.",
-      hint: "total += x[i] is really three steps: read total, add, write total back. What if 16 threads read total at the same moment?",
-      dataNote: `The right answer is ${sum16}.`,
       palette: ["idx_fixed", "guard", "race", "atomic"],
       start: [{ type: "idx_fixed" }, { type: "race" }],
       blocks: {
@@ -344,8 +330,7 @@ const Engine = (() => {
     {
       id: "tree",
       number: 4,
-      title: "Fast and correct: the tree",
-      concept: "Shared memory and __syncthreads()",
+      ...TEXT.get("tree", { sum16 }),
       dims: 1,
       grid: { x: 1, y: 1 },
       block: { x: 16, y: 1 },
@@ -353,10 +338,6 @@ const Engine = (() => {
       kernelHeader: ["__device__ int total = 0;", "__global__ void treeSum(const int* x) {", "    __shared__ int partial[16];"],
       launch: "treeSum<<<1, 16>>>(x);   // 1 block × 16 threads",
       cpuCode: "for (int i = 0; i < 16; ++i) total += x[i];",
-      mission:
-        "Make the sum correct without making threads take turns. Pairs of threads add their values in shared memory, halving the number of active threads each step: 16 values, then 8, 4, 2, 1. Use __syncthreads() so that no thread reads a value before another thread has finished writing it.",
-      hint: "Strides 8, 4, 2, 1, each one followed by __syncthreads(). Thread 0 then copies partial[0] into total.",
-      dataNote: `The right answer is ${sum16}. In this lab, a thread sees another thread's write only after a __syncthreads() (its own writes it sees at once).`,
       palette: ["tid", "load", "sync", "stride", "final", "raceTotal"],
       start: [{ type: "tid" }, { type: "load" }],
       blocks: {
@@ -574,8 +555,9 @@ const Engine = (() => {
   }
 
   function judge(level, program, res) {
+    const MSG = TEXT.classicMessages({ fmtList, ranges });
     if (!program.length)
-      return fail("The kernel is empty", "Drag blocks from the palette into the kernel, then press Run on GPU.");
+      return fail(...MSG.kernelEmpty());
     const { diag, mem } = res;
     const L = (t) => threadLabel(level, res.threads[t]);
 
@@ -584,25 +566,18 @@ const Engine = (() => {
       const f = diag.faults[0];
       if (f.info.kind === "undef") {
         const setter = { i: "int i = …", x: "int x = …", y: "int y = …", t: "int t = …" }[f.info.name];
-        return fail(`Every thread used ${f.info.name} before setting it`,
-          `Put the ${setter} block above the first block that uses ${f.info.name}.`);
+        return fail(...MSG.usedBeforeSet({ f, setter }));
       }
       const oob = diag.faults.filter((d) => d.info.kind === "oob");
       const who = oob.map((d) => L(d.thread));
       const guardType = level.dims === 2 ? "guard2" : "guard";
       const guardAt = indexOf(program, guardType);
-      let hint;
-      if (level.dims === 2 && has(program, "blurT"))
-        hint = "The swapped block uses x as the row. Rows go with y: out[y][x].";
-      else if (guardAt === -1)
-        hint = level.dims === 2
-          ? "Add the block if (x >= w || y >= h) return; right after computing x and y."
-          : "Add if (i >= n) return; right after computing i, before touching the arrays.";
-      else if (guardAt > oob[0].k)
-        hint = "The bounds check comes too late: move it above the block that reads and writes the arrays.";
-      else hint = "Check the index formula: some threads compute an index that is too large.";
-      return fail(`${oob.length} thread${oob.length > 1 ? "s" : ""} went outside the data`,
-        `For example ${who[0]} ${oob[0].message}. ${hint}`, { who: oob.map((d) => d.thread) });
+      let why; // which hint the message gives
+      if (level.dims === 2 && has(program, "blurT")) why = "swappedXY";
+      else if (guardAt === -1) why = level.dims === 2 ? "noGuard2D" : "noGuard1D";
+      else if (guardAt > oob[0].k) why = "guardTooLate";
+      else why = "badIndex";
+      return fail(...MSG.outsideTheData({ oob, who, why }), { who: oob.map((d) => d.thread) });
     }
 
     if (level.id === "vector-add" || level.id === "image-blur") {
@@ -616,41 +591,28 @@ const Engine = (() => {
       }
       const cell = (i) => (level.dims === 2 ? `out[${Math.floor(i / level.w)}][${i % level.w}]` : `c[${i}]`);
       if (missing.length === A.len)
-        return fail(`Nothing was written to ${outName}`,
-          level.id === "vector-add" ? "Add the block that computes c[i]." : "Add out[y][x] = blur_pixel(in, w, h, x, y);");
+        return fail(...MSG.nothingWritten({ outName, level }));
       if (dup.length || missing.length) {
-        let msg = "";
-        if (dup.length) msg += `${cell(dup[0])} was written by ${A.writers.get(dup[0]).size} different threads. `;
-        if (missing.length)
-          msg += level.dims === 2
-            ? `${missing.length} of the ${A.len} pixels were never written. `
-            : `c[${fmtList(ranges(missing))}] ${missing.length === 1 ? "was" : "were"} never written. `;
-        let hint = "Every thread needs a different index. ";
+        let why = null; // which hint the message adds
         if (level.dims === 1) {
           const ib = program.find((s) => s.type === "idx_i");
-          if (has(program, "idx_tid")) hint += "threadIdx.x alone repeats in every block: blocks also need blockIdx.x.";
-          else if (ib) hint += "Which variable tells blocks apart, and how many elements does each block cover?";
+          if (has(program, "idx_tid")) why = "tidRepeats";
+          else if (ib) why = "whichVariable";
         } else {
           const yb = program.find((s) => s.type === "idx_y");
           const yf = { ...level.blocks.idx_y.fields, ...(yb?.fields || {}) };
-          if (yb && Object.values(yf).some((v) => v.endsWith(".x"))) hint += "y should be built from the .y variables only.";
-          else hint += "x uses the .x variables, y the .y variables, in the same pattern as level 1.";
+          why = yb && Object.values(yf).some((v) => v.endsWith(".x")) ? "yUsesX" : "xyPattern";
         }
-        return fail("Some outputs were written twice and others never", msg + hint);
+        return fail(...MSG.writtenTwiceOrNever({ dup, missing, A, cell, level, why }));
       }
       const wrong = [];
       for (let i = 0; i < A.len; i++) if (A.committed[i] !== level.expected[i]) wrong.push(i);
       if (wrong.length) {
         const i = wrong[0];
-        const why = level.id === "vector-add" ? `a[${i}] + b[${i}] = ${level.expected[i]}` : `the 3 × 3 average, ${level.expected[i]}`;
-        return fail(`${wrong.length} output values are wrong`,
-          `${cell(i)} is ${A.committed[i]} but should be ${why}. ${level.id === "vector-add" ? "Use the + block." : "Use the blur_pixel block."}`);
+        return fail(...MSG.wrongValues({ wrong, cell, i, A, level }));
       }
       const returned = res.threads.filter((t) => t.returned).length;
-      return pass(
-        level.id === "vector-add" ? "All 28 elements are correct" : "Every pixel is blurred correctly",
-        `${res.threads.length} threads ran the kernel at the same time, finishing in ${res.steps} steps. The CPU loop needs ${level.cpuSteps} steps, one per ${level.id === "vector-add" ? "element" : "pixel"}. ${returned} thread${returned === 1 ? "" : "s"} had nothing to do and returned early.`
-      );
+      return pass(...MSG.passElementwise({ level, res, returned }));
     }
 
     // summation levels
@@ -658,41 +620,29 @@ const Engine = (() => {
     const lost = mem.conflicts.filter((c) => c.arr === "total");
     if (total === level.expectedTotal) {
       if (level.atomicLesson)
-        return pass(`total = ${total}: correct`, level.passText ? level.passText(res, diag) :
-          `But the ${diag.atomics} atomicAdd calls had to take turns, so the kernel took ${res.steps} steps, more than the CPU loop's ${level.cpuSteps}. Level 4 shows how to be correct and fast.`);
-      return pass(`total = ${total}: correct and fast`,
-        `${res.steps} steps, against ${level.cpuSteps} for the CPU loop. Each step halves the active threads, so 1,024 numbers would take about 23 steps with the same pattern, instead of 1,024.`);
+        return pass(...MSG.passTotalAtomic({ total, level, res, diag }));
+      return pass(...MSG.passTotalTree({ total, res, level }));
     }
     if (level.atomicLesson && has(program, "race") && has(program, "atomic"))
-      return fail(`total = ${total}, expected ${level.expectedTotal}`,
-        "The kernel still contains total += x[i], whose racing writes land at the end and overwrite the atomic result. Remove that block and keep only atomicAdd.");
+      return fail(...MSG.atomicStillHasRace({ total, level }));
     if (lost.length) {
       const c = lost[0];
       const survivor = threadLabel(level, res.threads[c.kept]);
-      return fail(`total = ${total}, expected ${level.expectedTotal}: a race condition`,
-        `${c.writers.length} threads read total at the same moment, each added its own number, and each wrote back. Only the write by ${survivor} survived; ${c.writers.length - 1} updates were lost. ${level.atomicLesson ? "Use atomicAdd, which makes read, add and write one indivisible step." : "Let one thread write the finished sum instead: if (t == 0) total = partial[0];"}`);
+      return fail(...MSG.raceCondition({ total, level, c, survivor }));
     }
     if (diag.stale.length) {
       const s0 = diag.stale[0];
       const loadAt = indexOf(program, "load");
       if (s0.writer === null && (loadAt === -1 || loadAt > s0.k))
-        return fail(`total = ${total}, expected ${level.expectedTotal}`,
-          "The threads read partial[] before anything was stored in it, so they added garbage. Start by copying the input into shared memory: partial[t] = x[t];",
-          { who: [s0.t] });
+        return fail(...MSG.nothingInSharedMemory({ total, level }), { who: [s0.t] });
       const reader = threadLabel(level, res.threads[s0.t]);
       const stepName = blockText(level.blocks[program[s0.k].type], { ...(level.blocks[program[s0.k].type].fields || {}), ...(program[s0.k].fields || {}) });
-      const what = s0.writer === null
-        ? `which no thread had written yet, so it got garbage`
-        : `before ${threadLabel(level, res.threads[s0.writer])}'s new value (${s0.newer}) was visible, so it got the old value`;
-      return fail(`total = ${total}, expected ${level.expectedTotal}: a thread read too early`,
-        `At step ${s0.k + 1} (${stepName}) ${reader} read ${s0.arr}[${s0.idx}] ${what}. Put a __syncthreads() block right before that step, so every thread waits until the writes are visible.`,
-        { who: [s0.t] });
+      const writer = s0.writer === null ? null : threadLabel(level, res.threads[s0.writer]);
+      return fail(...MSG.readTooEarly({ total, level, s0, stepName, reader, writer }), { who: [s0.t] });
     }
     if (total === 0)
-      return fail("total is still 0",
-        level.atomicLesson ? "No thread added anything to total." : "Nothing copied the finished sum into total. Add if (t == 0) total = partial[0]; at the end.");
-    return fail(`total = ${total}, expected ${level.expectedTotal}`,
-      "Even with perfect timing, some values are added twice or not at all. Use the strides 8, 4, 2 and 1 once each, largest first.");
+      return fail(...MSG.totalStillZero({ level }));
+    return fail(...MSG.totalWrong({ total, level }));
   }
 
   const pass = (title, message) => ({ ok: true, title, message });

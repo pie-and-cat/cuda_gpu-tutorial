@@ -19,6 +19,7 @@ node tests/test_engine.js && node tests/test_physics.js   # run the tests
 | `index.html` | The page markup, and the list of scripts and styles it loads. |
 | `src/style.css` | All styling, including the light and dark themes (CSS variables at the top). |
 | `src/theme-init.js` | Tiny script that applies the saved theme before the page paints. |
+| `src/level-text.js` | **All the level text**: titles, missions, hints, and the messages shown when a run fails or passes. Edit wording here. |
 | `src/engine.js` | The GPU model and the classic levels. No DOM, so it also runs in Node. |
 | `src/physics.js` | The CUDA Balls levels 1–6 and the physics simulation. No DOM. |
 | `src/ui.js` | The interface: palette, drag and drop, canvas drawing, tour, celebration. |
@@ -26,10 +27,11 @@ node tests/test_engine.js && node tests/test_physics.js   # run the tests
 | `src/assets/` | The image, video and sound files those lists point to. |
 | `tests/` | Node tests for the engine and the physics. |
 
-The scripts load in order (`engine.js`, `physics.js`, the data files, then `ui.js`), and each one uses the ones before it.
+The scripts load in order (`level-text.js`, `engine.js`, `physics.js`, the data files, then `ui.js`), and each one uses the ones before it.
 
 ## Common changes
 
+- **Change level wording:** edit `src/level-text.js`. Level prose is under each level's id; `${name}` in a template string is a number the level code supplies. Run the tests afterwards.
 - **Add a celebration picture:** put the file in `src/assets/celebrate/` and add an entry to `src/data/celebrate.js` (`src`, `w`, `h`, `ms`; optional `video`, `card` for a backdrop color, `pixel` for crisp pixel art). Every picture is scaled to cover about the same area.
 - **Change the celebration sound:** replace `src/assets/celebrate/yippee.mp3`.
 - **Add a ball face:** put a square-ish webp in `src/assets/faces/` and add an entry with its credit to `src/data/faces.js`. The credits footer is built from that file.
