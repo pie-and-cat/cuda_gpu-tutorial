@@ -629,7 +629,7 @@ const Physics = (() => {
       return fail(...MSG.extraWork());
     if (lag)
       return fail(...MSG.oneFrameBehind());
-    return pass(...MSG.passRealTime());
+    return pass(res.level.passTitle, res.level.passText(res));
   }
 
   // ---------------------------------------------------------------- level 5: total energy

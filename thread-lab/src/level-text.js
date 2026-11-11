@@ -12,44 +12,42 @@ const LEVEL_TEXT = (() => {
   const levels = {
     // CUDA Balls · level 1
     "balls-move": {
-      title: "Move the balls",
-      concept: "One thread per ball",
+      title: "Balls",
+      concept: "",
       mission:
-        "This is the start of CUDA Balls, a ball simulation. 24 threads, in 3 blocks of 8, should each move one of the 22 balls a tiny step, 960 times a second. The starting kernel runs, but most balls never move. Fix it so every ball has exactly one thread.",
-      hint: "Thread 3 of block 2 should move ball 19, because 2 × 8 + 3 = 19. The last 2 threads have no ball.",
-      dataNote: "pos[i] and vel[i] are ball i's position and velocity. No gravity or walls yet: the balls just drift, and pass through each other.",
+        "Your first task- give each ball a thread to move it. A free hint for the first one: blockId.x * blockDim.x + threadIdx.x. (Candy for the first person to explain why it works.) ",
+      hint: "There are more threads than balls. How do you end the extra threads early?",
+      dataNote: "pos[i] and vel[i] are ball i's position and velocity. No gravity or walls yet!.",
       nothingStored: "No thread moved its ball. Add pos[i] += vel[i] * dt;",
-      passTitle: "Every ball has exactly one thread",
+      passTitle: "Every ball has a thread!",
       passText: (sc) =>
-        `Thread t of block b moved ball b × 8 + t, and the 2 spare threads returned early. All 22 balls moved at once: ${sc.gpu} steps per substep on the GPU, against ${sc.cpu} for one CPU core going ball by ball. ` +
-        "Every CUDA program starts like this: work out which piece of the data is yours.",
+        `Thread t of block b moved ball b × 8 + t, and the 2 spare threads returned early. The GPU was faster than the CPU, with ${sc.gpu} steps per substep on the GPU, against the CPU's ${sc.cpu}. Congrats! `
     },
 
     // CUDA Balls · level 2
     "balls-gravity": {
-      title: "Gravity and walls",
-      concept: "Each thread's own variables",
+      title: "Gravity & walls",
+      concept: "",
       mission:
-        "Now make the balls fall and bounce. Each thread copies its ball into its own variables p and v, works out the force f on it, updates v and then p, and stores them back. The starting kernel has a block in the wrong place, and no walls.",
-      hint: "One thread runs its statements top to bottom: load, force, walls, v += …, p += …, then store. A store that runs before p changes saves the old position.",
-      dataNote: "p, v and f belong to each thread; no other thread sees them. The balls still pass through each other: collisions come next.",
+        "Now make the balls fall and bounce! Each thread copies its ball into its own variables p and v, works out the force f on it, updates v and then p, and stores them back.",
+      hint: "A store that runs before p changes saves the old position.",
+      dataNote: "p, v and f belong to each thread; no other thread sees them. The balls still pass through each other.",
       nothingStored: "Every thread works out its ball's new p and v, then throws them away. Add the block that stores them.",
-      passTitle: "The balls fall and bounce",
+      passTitle: "The balls fall and bounce!",
       passText: (sc) =>
-        `Each thread kept its ball in its own variables, and the kernel ran 960 times a second, each launch starting from the last one's result. ${sc.gpu} steps per substep on the GPU, ${sc.cpu} on one CPU core. ` +
-        "The balls still pass through each other, because each thread looks only at its own ball. Next: collisions.",
+        `The balls still pass through each other, because each thread looks only at its own ball. ${sc.gpu} steps per substep on the GPU, ${sc.cpu} on one CPU core. Congrats! `
     },
 
     // CUDA Balls · level 3
     "balls-collide": ({ N }) => ({
       title: "Collisions",
-      concept: "Double buffering",
+      concept: "",
       mission:
-        "Make the balls push each other apart. Each thread now has to look at every other ball, which brings a new problem: threads read positions that other threads are overwriting. Fix it so the result is the same whichever block the GPU runs first.",
-      hint: "Add the for (j …) push loop above v += …. Then the race: no thread may overwrite pos while other threads still read it, so store into nextPos and nextVel instead.",
+        "Make the balls collide! I believe in you! :)",
+      hint: "Which of the blocks consider the positions of other balls?",
       dataNote: "If your kernel writes back into pos and vel, the host skips its usual swap. With nextPos and nextVel, the host swaps the two buffers after every launch.",
       nothingStored: "Every thread works out its ball's new p and v, then throws them away. Add the block that stores them.",
-      passTitle: "The balls bounce, stack and stay in the box",
+      passTitle: "The balls bounce, collide and stay in the box!",
       passText: (sc) =>
         "Each of the 22 balls had its own thread, and every thread read only the old positions, so the result is the same in any block order. " +
         `One substep took ${sc.gpu} steps on the GPU; one CPU core would need ${N} × ${sc.perBall} = ${sc.cpu}. ` +
@@ -58,15 +56,19 @@ const LEVEL_TEXT = (() => {
 
     // CUDA Balls · level 4
     "balls-loop": {
-      title: "The time loop",
-      concept: "Host code and copies",
+      title: "The Big Loop. 0.0",
+      concept: "",
       editorTitle: "Your host code",
       mission:
-        "The kernel from level 3 is done. Now write the CPU code that drives it: each screen frame must run 16 substeps on the GPU, then bring the positions back and draw them. The starting code runs, but the picture never changes. Make the balls move in real time, without copying more than you need.",
+        "It's time to write the CPU code! Make the balls move in real time. The code from the previous level is running.",
       hint:
-        "Inside the loop: launch, then swap. Below the }: copy pos to the CPU, then draw. The GPU keeps its own copy of the balls, so nothing needs to go back to it.",
+        "Do you want to copy the positions back to the CPU every screen frame, or every frame?",
       dataNote:
         "At the start, pos holds the balls and nextPos is uninitialized. Blocks above the } run 16 times per frame; blocks below it run once.",
+      passTitle: "The balls move in real time!",
+      passText: (res) =>
+        "The balls move in real time, and the GPU keeps its own copy of their positions. " +
+        `Each screen frame ran ${res.counts.launch} launches on the GPU, ${res.counts.launch * 60} a second. Congrats!`,
     },
 
     // CUDA Balls · level 5
@@ -74,12 +76,11 @@ const LEVEL_TEXT = (() => {
       title: "Total energy",
       concept: "Race conditions and atomics",
       mission:
-        "Is the simulation losing energy, as real bouncing balls do? Each thread works out its ball's energy and adds it to one shared total. The kernel runs, but the total is far too small. Run it, find out why, and fix it.",
-      hint: "total += … is really three steps: read total, add, write total back. What happens when 22 threads read total at the same moment?",
+        "Are the balls losing energy, like in real life? Each thread works out its ball's energy and adds it to a shared total, but the total is smaller than it should be. Fix it plz",
+      hint: "Are all of the threads adding to total at the same time?",
       dataNote: `energy(i) = ½ m v² + m g y for ball i, one second into the simulation, rounded. The right total is ${ENERGY_TOTAL}.`,
       passText: (res, diag) =>
-        `The ${diag.atomics} atomicAdd calls had to take turns, so this took ${res.steps} steps, about as many as the CPU loop. That is fine for 22 balls; for millions, a tree of partial sums in shared memory is faster (the classic track's last level). ` +
-        "The chart below runs your kernel on every frame: the total falls as collisions and air drag turn motion into heat. CUDA Balls checks the same thing in --selftest.",
+        `The ${diag.atomics} atomicAdd calls had to take turns, so this took ${res.steps} steps, about as many as the CPU loop. That is fine for 22 balls; for millions, a tree of partial sums in shared memory is faster. Congrats!`
     }),
 
     // CUDA Balls · level 6
@@ -278,11 +279,6 @@ const LEVEL_TEXT = (() => {
     oneFrameBehind: () => [
       "Always one frame behind",
       "draw runs before the copy, so each frame shows the positions copied in the frame before: 16 substeps old. Copy first, then draw.",
-    ],
-    passRealTime: () => [
-      "Real time, with one copy per frame",
-      "Every frame: 16 launches and swaps on the GPU, then one copy of the 22 positions to the CPU and one draw. That is 960 launches but only 60 copies a second, because the balls stay on the GPU the whole time. " +
-      "Swapping two pointers costs nothing; no data moves. This is the loop in CUDA Balls: physicsStep, then physicsRead.",
     ],
   });
 

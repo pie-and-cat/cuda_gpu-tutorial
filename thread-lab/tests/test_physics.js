@@ -44,7 +44,7 @@ check("nothing moves", L1, [RIGHT_IDX, { type: "guard" }], false, "pos[i] += vel
 // ---- level 2: gravity and walls
 check("starting kernel", L2, L2.start, false, "store runs before p");
 check("store moved last", L2, prog("idx guard load forces velocity position storeInPlace"), false, "pushFromWalls");
-check("correct", L2, prog("idx guard load forces walls velocity position storeInPlace"), true, "Next: collisions");
+check("correct", L2, prog("idx guard load forces walls velocity position storeInPlace"), true, "pass through each other");
 check("walls after velocity", L2, prog("idx guard load forces velocity walls position storeInPlace"), false, "never used");
 check("no velocity update", L2, prog("idx guard load forces walls position storeInPlace"), false, "v += f / mass[i] * dt");
 check("no position update", L2, prog("idx guard load forces walls velocity storeInPlace"), false, "p += v * dt");
@@ -73,7 +73,7 @@ expect(orderDiff === 0, "correct kernel gives identical results in either block 
 expect(race.verdict.divergence > 0.5, `racy kernel diverges by ${race.verdict.divergence?.toFixed(2)} units with the blocks reversed`, "racy kernel diverges too little to see");
 
 // ---- level 4: the time loop
-check("correct", L4, prog("launch swap loopEnd copyBack draw"), true, "960 launches");
+check("correct", L4, prog("launch swap loopEnd copyBack draw"), true, "960 a second");
 check("starting code", L4, L4.start, false, "never changes");
 check("start + copy", L4, prog("launch loopEnd swap copyBack draw"), false, "swap runs once per frame");
 check("swap before launch", L4, prog("swap launch loopEnd copyBack draw"), false, "garbage");
