@@ -706,24 +706,22 @@ const Physics = (() => {
     ...kernelCommon,
     id: "balls-move",
     number: 1,
-    title: "Move the balls",
-    concept: "One thread per ball",
+    title: "Move the Balls",
     frames: 120,
     startState: DRIFT,
     checks: { coverage: true },
     kernelHeader: ["__global__ void stepKernel(float2* pos,", "    const float2* vel, int n) {"],
     launch: "stepKernel<<<3, 8>>>(pos, vel, 22);   // 960 launches a second",
-    mission:
-      "This is the start of CUDA Balls, a ball simulation. 24 threads, in 3 blocks of 8, should each move one of the 22 balls a tiny step, 960 times a second. The starting kernel runs, but most balls never move. Fix it so every ball has exactly one thread.",
-    hint: "Thread 3 of block 2 should move ball 19, because 2 × 8 + 3 = 19. The last 2 threads have no ball.",
-    dataNote: "pos[i] and vel[i] are ball i's position and velocity. No gravity or walls yet: the balls just drift, and pass through each other.",
+    mission: "Your first task- give each ball a thread to move it. You have three variables to work with, blockIdx.x, threadIdx.x and blockDim.x. A free hint for the first one: blockIdx.x * blockDim.x + threadIdx.x.",
+    hint: "There are extra threads. How do you make them return early?",
+    dataNote: "pos[i] and vel[i] are ball i's position and velocity. Just make them drift!",
     nothingStored: "No thread moved its ball. Add pos[i] += vel[i] * dt;",
     palette: ["idx_tid", "idx_i", "guard", "drift"],
     start: ["idx_tid", "drift"].map((type) => ({ type })),
     passTitle: "Every ball has exactly one thread",
     passText: (sc) =>
-      `Thread t of block b moved ball b × 8 + t, and the 2 spare threads returned early. All 22 balls moved at once: ${sc.gpu} steps per substep on the GPU, against ${sc.cpu} for one CPU core going ball by ball. ` +
-      "Every CUDA program starts like this: work out which piece of the data is yours.",
+      `Thread t of block b moved ball b × 8 + t, and the 2 spare threads returned early. The GPU was faster than the CPU, with the GPU having ${sc.gpu} steps per substep compared to the CPU's ${sc.cpu} steps per substep.
+      Congratulations!` ,
   };
 
   const gravityLevel = {
