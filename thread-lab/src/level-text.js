@@ -17,6 +17,8 @@ const LEVEL_TEXT = (() => {
       mission:
         "Your first task- give each ball a thread to move it. A free hint for the first one: blockId.x * blockDim.x + threadIdx.x. (Candy for the first person to explain why it works.) ",
       hint: "There are more threads than balls. How do you end the extra threads early?",
+      metaphorHint:
+        "We hired 24 workers (3 teams of 8), but there are only 22 balls. How do you tell the 2 extra workers with no ball to clock out early so they don't break anything?",
       dataNote: "pos[i] and vel[i] are ball i's position and velocity. No gravity or walls yet!.",
       nothingStored: "No thread moved its ball. Add pos[i] += vel[i] * dt;",
       passTitle: "Every ball has a thread!",
@@ -31,6 +33,8 @@ const LEVEL_TEXT = (() => {
       mission:
         "Now make the balls fall and bounce! Each thread copies its ball into its own variables p and v, works out the force f on it, updates v and then p, and stores them back.",
       hint: "A store that runs before p changes saves the old position.",
+      metaphorHint:
+        "If a worker writes back to the warehouse (pos[i] = p) before updating p on their clipboard, they'll just save the old position and the ball won't move!",
       dataNote: "p, v and f belong to each thread; no other thread sees them. The balls still pass through each other.",
       nothingStored: "Every thread works out its ball's new p and v, then throws them away. Add the block that stores them.",
       passTitle: "The balls fall and bounce!",
@@ -45,6 +49,8 @@ const LEVEL_TEXT = (() => {
       mission:
         "Make the balls collide! I believe in you! :)",
       hint: "Which of the blocks consider the positions of other balls?",
+      metaphorHint:
+        "Look for the purple loop block (for (int j = 0...)). That's your worker scanning every other ball (j) to see if it's touching theirs (i).",
       dataNote: "If your kernel writes back into pos and vel, the host skips its usual swap. With nextPos and nextVel, the host swaps the two buffers after every launch.",
       nothingStored: "Every thread works out its ball's new p and v, then throws them away. Add the block that stores them.",
       passTitle: "The balls bounce, collide and stay in the box!",
@@ -63,6 +69,8 @@ const LEVEL_TEXT = (() => {
         "It's time to write the CPU code! Make the balls move in real time. The code from the previous level is running.",
       hint:
         "Do you want to copy the positions back to the CPU every screen frame, or every frame?",
+      metaphorHint:
+        "Are you going to ship the results from the GPU warehouse to your CPU desk (cudaMemcpy) for every tiny physics tick (16 times per frame), or just once at the end when you're ready to draw (hostPos)?",
       dataNote:
         "At the start, pos holds the balls and nextPos is uninitialized. Blocks above the } run 16 times per frame; blocks below it run once.",
       passTitle: "The balls move in real time!",
@@ -78,6 +86,8 @@ const LEVEL_TEXT = (() => {
       mission:
         "Are the balls losing energy, like in real life? Each thread works out its ball's energy and adds it to a shared total, but the total is smaller than it should be. Fix it plz",
       hint: "Are all of the threads adding to total at the same time?",
+      metaphorHint:
+        "Traffic Jam at the Scoreboard: With total += energy(i), all 8 workers on a team read total and add their own energy on their clipboard, and write back at the exact same time. Look at the pink SYNC AND ATOMICS block (atomicAdd): it puts a velvet rope around total so workers form a single-file line and add their numbers one by one.",
       dataNote: `energy(i) = ½ m v² + m g y for ball i, one second into the simulation, rounded. The right total is ${ENERGY_TOTAL}.`,
       passText: (res, diag) =>
         `The ${diag.atomics} atomicAdd calls had to take turns, so this took ${res.steps} steps, about as many as the CPU loop. That is fine for 22 balls; for millions, a tree of partial sums in shared memory is faster. Congrats!`

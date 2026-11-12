@@ -179,6 +179,61 @@ button.wordmark:hover span { color: color-mix(in srgb, var(--accent) 80%, black)
 .mission details p, .mission details ul { margin: 6px 0 0; max-width: 72ch; }
 .mission details ul { padding-left: 20px; }
 
+/* Metaphor hint button & box inside the Hint details */
+.metaphor-section {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+}
+.btn-metaphor {
+  appearance: none;
+  -webkit-appearance: none;
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--accent);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: background .15s ease, border-color .15s ease, color .15s ease;
+}
+.btn-metaphor:hover {
+  background: var(--chip, #dbe2ea);
+  border-color: var(--accent);
+}
+.metaphor-box {
+  margin-top: 8px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+  border-left: 3px solid var(--accent);
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--ink);
+  animation: metaphorFadeIn .2s ease-in-out;
+}
+.metaphor-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+.metaphor-box p {
+  margin: 0;
+}
+@keyframes metaphorFadeIn {
+  from { opacity: 0; transform: translateY(-2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 /* ---------------------------------------------------------------- blocks */
 .block {
   --c: var(--c-index); --fg: white;

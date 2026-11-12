@@ -93,12 +93,28 @@
       `<div class="tabs" role="tablist" aria-label="Levels">${tabs}</div>`;
   }
 
+  function formatHint(text) {
+    if (!text) return "";
+    return esc(text).replace(/\n/g, "<br>");
+  }
+
   function renderMission() {
     const L = lv();
+    const metaphorHTML = L.metaphorHint
+      ? `<div class="metaphor-section">` +
+        `<button type="button" class="btn-metaphor" id="btn-metaphor" aria-expanded="false">` +
+        `Want a metaphor? <span aria-hidden="true">💡</span>` +
+        `</button>` +
+        `<div class="metaphor-box" id="metaphor-box" hidden>` +
+        `<strong class="metaphor-label">Metaphor clue</strong>` +
+        `<p>${formatHint(L.metaphorHint)}</p>` +
+        `</div>` +
+        `</div>`
+      : "";
     $("mission").innerHTML =
       `<p class="eyebrow">${esc(TRACKS.find((t) => t[0] === L.track)[1])} · Level ${L.number} of ${trackLevels(L.track).length} · ${esc(L.concept)}</p>` +
       `<h1>${esc(L.title)}</h1><p>${esc(L.mission)}</p><p class="note">${esc(L.dataNote)}</p>` +
-      `<details><summary>Hint</summary><p>${esc(L.hint)}</p></details>` +
+      `<details><summary>Hint</summary><p>${formatHint(L.hint)}</p>${metaphorHTML}</details>` +
       `<details><summary>${L.kind === "host" ? "How this level models the CPU and the GPU" : "How this lab models a GPU"}</summary><ul>` +
       (L.model ? L.model.map((m) => `<li>${esc(m)}</li>`).join("") :
         `<li>All live threads run the same block of your kernel together: one block is one step.</li>` +
@@ -1548,6 +1564,18 @@
       const all = trackLevels(track.dataset.track);
       setLevel(all.find((i) => !state.done[i]) ?? all[0]);
     }
+  });
+  $("mission").addEventListener("click", (e) => {
+    const btn = e.target.closest("#btn-metaphor");
+    if (!btn) return;
+    const box = $("metaphor-box");
+    if (!box) return;
+    const isHidden = box.hidden;
+    box.hidden = !isHidden;
+    btn.setAttribute("aria-expanded", isHidden ? "true" : "false");
+    btn.innerHTML = isHidden
+      ? `Hide metaphor <span aria-hidden="true">✕</span>`
+      : `Want a metaphor? <span aria-hidden="true">💡</span>`;
   });
   $("stage").addEventListener("click", (e) => {
     if (e.target.id === "btn-next") { setLevel(state.level + 1); return; }
