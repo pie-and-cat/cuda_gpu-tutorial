@@ -85,12 +85,13 @@ const LEVEL_TEXT = (() => {
 
     // CUDA Balls · level 6
     "balls-pie": {
-      title: "Pie the professor",
+      title: "Pie the professor!",
       concept: "A parameter sweep",
       mission:
-        "Finale: the department's charity fundraiser, where a volunteer professor takes a pie to the face. Twenty pies are ready, thrown from soft to fast, and each thread flies one whole throw. Find the gentlest throw that still lands on the face. The starting kernel has no gravity, and its record of the answer is not safe.",
+        "Make a pie thrower simulation with 16 throws at once, and find the gentlest that hits the professor. " + 
+        "Each thread flies one throw, and if it hits, compares its throw number i with gentlest. If i is smaller, it writes i into gentlest.",
       hint:
-        "Inside the loop: gravity, then the move, then the hit check. Below the }: record the gentlest hit. Several threads hit at once, so the compare and the write must happen in one step.",
+        "What are the forces that act on a pie? What is the minimum amount of force that hits the professor?",
       dataNote:
         "Throw i leaves the launcher at 9.25 + 0.25 × i m/s, always at 35°. The flight is simulated for 1.5 seconds in steps of 1/960 s. Blocks above the } run every step; blocks below it run once.",
     },
