@@ -34,7 +34,7 @@ const LEVEL_TEXT = (() => {
         "Now make the balls fall and bounce! Each thread copies its ball into its own variables p and v, works out the force f on it, updates v and then p, and stores them back.",
       hint: "A store that runs before p changes saves the old position.",
       metaphorHint:
-        "Order of Operations: If a worker writes back to the warehouse (pos[i] = p) before updating p on their clipboard, they'll just save the old position and the ball won't move!",
+        "If a worker writes back to the warehouse (pos[i] = p) before updating p on their clipboard, they'll just save the old position and the ball won't move!",
       dataNote: "p, v and f belong to each thread; no other thread sees them. The balls still pass through each other.",
       nothingStored: "Every thread works out its ball's new p and v, then throws them away. Add the block that stores them.",
       passTitle: "The balls fall and bounce!",
@@ -50,7 +50,7 @@ const LEVEL_TEXT = (() => {
         "Make the balls collide! I believe in you! :)",
       hint: "Which of the blocks consider the positions of other balls?",
       metaphorHint:
-        "Two clues:\n1. Look for the purple loop block (for (int j = 0...))—that's your worker scanning every other ball (j) to see if it's touching theirs (i).\n2. Make sure your final green block writes to nextPos and nextVel instead of pos and vel!",
+        "Look for the purple loop block (for (int j = 0...)). That's your worker scanning every other ball (j) to see if it's touching theirs (i).",
       dataNote: "If your kernel writes back into pos and vel, the host skips its usual swap. With nextPos and nextVel, the host swaps the two buffers after every launch.",
       nothingStored: "Every thread works out its ball's new p and v, then throws them away. Add the block that stores them.",
       passTitle: "The balls bounce, collide and stay in the box!",
@@ -70,7 +70,7 @@ const LEVEL_TEXT = (() => {
       hint:
         "Do you want to copy the positions back to the CPU every screen frame, or every frame?",
       metaphorHint:
-        "Shipping the results from the GPU warehouse to your CPU desk (cudaMemcpy) is like driving a delivery truck across town—it's slow! Do you need to drive the truck back after every tiny physics tick (16 times per frame), or just once at the end when you're ready to draw (hostPos)?",
+        "Are you going to ship the results from the GPU warehouse to your CPU desk (cudaMemcpy) for every tiny physics tick (16 times per frame), or just once at the end when you're ready to draw (hostPos)?",
       dataNote:
         "At the start, pos holds the balls and nextPos is uninitialized. Blocks above the } run 16 times per frame; blocks below it run once.",
       passTitle: "The balls move in real time!",
@@ -87,7 +87,7 @@ const LEVEL_TEXT = (() => {
         "Are the balls losing energy, like in real life? Each thread works out its ball's energy and adds it to a shared total, but the total is smaller than it should be. Fix it plz",
       hint: "Are all of the threads adding to total at the same time?",
       metaphorHint:
-        "Traffic Jam at the Scoreboard: With total += energy(i), all 8 workers on a team read total (say, 0), add their own energy on their clipboard, and write back at the exact same time—clobbering each other's work! Look at the pink SYNC AND ATOMICS block (atomicAdd): it puts a velvet rope around total so workers form a single-file line and add their numbers one by one.",
+        "Traffic Jam at the Scoreboard: With total += energy(i), all 8 workers on a team read total and add their own energy on their clipboard, and write back at the exact same time. Look at the pink SYNC AND ATOMICS block (atomicAdd): it puts a velvet rope around total so workers form a single-file line and add their numbers one by one.",
       dataNote: `energy(i) = ½ m v² + m g y for ball i, one second into the simulation, rounded. The right total is ${ENERGY_TOTAL}.`,
       passText: (res, diag) =>
         `The ${diag.atomics} atomicAdd calls had to take turns, so this took ${res.steps} steps, about as many as the CPU loop. That is fine for 22 balls; for millions, a tree of partial sums in shared memory is faster. Congrats!`
@@ -102,7 +102,7 @@ const LEVEL_TEXT = (() => {
       hint:
         "Inside the loop: gravity, then the move, then the hit check. Below the }: record the gentlest hit. Several threads hit at once, so the compare and the write must happen in one step.",
       metaphorHint:
-        "Two-part checklist:\n1. Inside the flight loop (above }): pull the pie down with gravity (v.y), move it (p), then check if it hit the professor's face (hitsFace(p)).\n2. After the flight (below }): multiple workers will hit the face and rush the scoreboard at once. If you use the green if (hit && i < gentlest) block, a faster throw can overwrite a gentler one mid-check! Use the pink atomicMin block so workers compare and update gentlest one at a time in a single unbreakable step.",
+        "We need to do 2 things:\n1. Inside the flight loop, pull the pie down with gravity (v.y), move it (p), then check if it hit the professor's face (hitsFace(p)).\n2. After the flight, multiple workers will hit the face and rush the scoreboard at once. If you use the green if (hit && i < gentlest) block, a faster throw can overwrite a gentler one mid-check! Use the pink atomicMin block so workers compare and update gentlest one at a time in a single unbreakable step.",
       dataNote:
         "Throw i leaves the launcher at 9.25 + 0.25 × i m/s, always at 35°. The flight is simulated for 1.5 seconds in steps of 1/960 s. Blocks above the } run every step; blocks below it run once.",
     },
